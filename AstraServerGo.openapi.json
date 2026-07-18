@@ -2418,7 +2418,14 @@
             "type": "object",
             "additionalProperties": { "type": "string" },
             "description": "科目简称→全称映射"
-          }
+          },
+          "startup_behavior": {
+            "type": "string",
+            "enum": ["exit", "stay", "normal"],
+            "default": "normal",
+            "description": "应用启动行为：exit-退出, stay-滞留(不显示UI), normal-正常显示"
+          },
+          "temperature_colors": { "$ref": "#/components/schemas/TemperatureColorsConfig" }
         }
       },
       "FullResponseConfig": {
