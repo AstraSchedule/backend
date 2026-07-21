@@ -67,6 +67,7 @@ func overrideBackupNamespace(payload *BackupPayload, ns string) {
 	setSliceNamespace(payload.DataVersions, ns)
 	setSliceNamespace(payload.AutorunRecords, ns)
 	setSliceNamespace(payload.CountdownRecord, ns)
+	setSliceNamespace(payload.Users, ns)
 }
 
 // resetIDsToZero 将切片中所有元素的 ID 字段重置为 0，让数据库自动分配新 ID
@@ -138,7 +139,7 @@ func ExportBackupNs(namespace string) (*BackupPayload, error) {
 	if err := base.Session(&gorm.Session{}).Order(orderByCreatedAtAsc).Find(&payload.CountdownRecord).Error; err != nil {
 		return nil, err
 	}
-	if err := dbConn.Order(orderByIDAsc).Find(&payload.Users).Error; err != nil {
+	if err := base.Session(&gorm.Session{}).Order(orderByIDAsc).Find(&payload.Users).Error; err != nil {
 		return nil, err
 	}
 
@@ -344,35 +345,17 @@ func importCountdownRecords(tx *gorm.DB, rows []dbTable.CountdownRecord, mode st
 }
 
 // importUsers 导入用户数据，按 namespace+username 做 upsert
-// 主分支不带 namespace，但保留函数签名一致，方便后续 saas/main 合并
 func importUsers(tx *gorm.DB, rows []dbTable.User, mode string) (int, error) {
-	if len(rows) == 0 {
-		return 0, nil
-	}
-
-	var onConflict clause.OnConflict
-	if mode == "skip" {
-		onConflict = clause.OnConflict{
-			Columns:   []clause.Column{{Name: "namespace"}, {Name: "username"}},
-			DoNothing: true,
-		}
-	} else {
-		onConflict = clause.OnConflict{
-			Columns: []clause.Column{{Name: "namespace"}, {Name: "username"}},
-			DoUpdates: clause.AssignmentColumns([]string{
-				"password_hash",
-				"role",
-				"scope",
-				"must_change_pwd",
-				"must_change_username",
-				"updated_at",
-			}),
-		}
-	}
-
-	err := tx.Clauses(onConflict).Create(&rows).Error
-	if err != nil {
-		return 0, err
-	}
-	return len(rows), nil
+	return importRows(tx, rows, onConflictSpec{
+		columns: []clause.Column{{Name: "namespace"}, {Name: "username"}},
+		updateCols: []string{
+			"password_hash",
+			"role",
+			"scope",
+			"must_change_pwd",
+			"must_change_username",
+			"updated_at",
+		},
+		mode: mode,
+	})
 }
