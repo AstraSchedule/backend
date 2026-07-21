@@ -24,6 +24,7 @@ type BackupPayload struct {
 	DataVersions    []dbTable.DataVersion     `json:"data_versions"`
 	AutorunRecords  []dbTable.AutorunRecord   `json:"autorun_records"`
 	CountdownRecord []dbTable.CountdownRecord `json:"countdown_records"`
+	Users           []dbTable.User            `json:"users"`
 }
 
 type BackupImportResult struct {
@@ -137,6 +138,9 @@ func ExportBackupNs(namespace string) (*BackupPayload, error) {
 	if err := base.Session(&gorm.Session{}).Order(orderByCreatedAtAsc).Find(&payload.CountdownRecord).Error; err != nil {
 		return nil, err
 	}
+	if err := dbConn.Order(orderByIDAsc).Find(&payload.Users).Error; err != nil {
+		return nil, err
+	}
 
 	return payload, nil
 }
@@ -188,6 +192,7 @@ func ImportBackupNs(payload *BackupPayload, mode string, overrideNs string) (*Ba
 		{name: "data_versions", run: func(tx *gorm.DB) (int, error) { return importDataVersions(tx, payload.DataVersions, mode) }},
 		{name: "autorun_records", run: func(tx *gorm.DB) (int, error) { return importAutorunRecords(tx, payload.AutorunRecords, mode) }},
 		{name: "countdown_records", run: func(tx *gorm.DB) (int, error) { return importCountdownRecords(tx, payload.CountdownRecord, mode) }},
+		{name: "users", run: func(tx *gorm.DB) (int, error) { return importUsers(tx, payload.Users, mode) }},
 	}
 
 	for _, step := range steps {
@@ -336,4 +341,38 @@ func importCountdownRecords(tx *gorm.DB, rows []dbTable.CountdownRecord, mode st
 	return importIDRows(tx, rows, "id", []string{
 		"namespace", "scope", "schedules", "created_at", "updated_at",
 	}, mode)
+}
+
+// importUsers 导入用户数据，按 namespace+username 做 upsert
+// 主分支不带 namespace，但保留函数签名一致，方便后续 saas/main 合并
+func importUsers(tx *gorm.DB, rows []dbTable.User, mode string) (int, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	var onConflict clause.OnConflict
+	if mode == "skip" {
+		onConflict = clause.OnConflict{
+			Columns:   []clause.Column{{Name: "namespace"}, {Name: "username"}},
+			DoNothing: true,
+		}
+	} else {
+		onConflict = clause.OnConflict{
+			Columns: []clause.Column{{Name: "namespace"}, {Name: "username"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"password_hash",
+				"role",
+				"scope",
+				"must_change_pwd",
+				"must_change_username",
+				"updated_at",
+			}),
+		}
+	}
+
+	err := tx.Clauses(onConflict).Create(&rows).Error
+	if err != nil {
+		return 0, err
+	}
+	return len(rows), nil
 }
