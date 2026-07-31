@@ -40,6 +40,14 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// 安全修复：校验 JWT 绑定的 namespace 与请求 Host 解析的 namespace 一致，
+		// 防止单实例多租户部署下通过伪造 Host 头跨租户访问
+		if !validateNamespaceBinding(c, claims) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "令牌与当前租户不匹配"})
+			c.Abort()
+			return
+		}
+
 		c.Set(UserClaimsKey, claims)
 		c.Next()
 	}
@@ -83,6 +91,13 @@ func AdminOrToken() gin.HandlerFunc {
 			return
 		}
 
+		// 安全修复：校验 JWT 绑定的 namespace 与请求 Host 解析的 namespace 一致
+		if !validateNamespaceBinding(c, claims) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "令牌与当前租户不匹配"})
+			c.Abort()
+			return
+		}
+
 		password := extractPasswordFromRequest(c)
 		if password == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"detail": "需要提供密码"})
@@ -100,6 +115,18 @@ func AdminOrToken() gin.HandlerFunc {
 		c.Set(UserClaimsKey, claims)
 		c.Next()
 	}
+}
+
+// validateNamespaceBinding 校验 JWT 绑定的 namespace 与请求 Host 解析的 namespace 一致。
+// 单实例多租户共享库部署下，租户身份来源于 Host 头；若 token 的租户与当前 Host 租户
+// 不一致，说明攻击者在用其他租户的 token 伪造 Host，直接拒绝。
+// Host 未解析出租户（release 模式 localhost/IP 等运维通道，ns=""）时跳过校验。
+func validateNamespaceBinding(c *gin.Context, claims *service.JWTClaims) bool {
+	ns := GetNamespace(c)
+	if ns == "" {
+		return true
+	}
+	return claims.Namespace == ns
 }
 
 func parseJWTFromHeader(c *gin.Context) *service.JWTClaims {
