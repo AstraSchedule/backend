@@ -23,6 +23,11 @@ func ParseHostToNamespace(host string) string {
 	if host == "" {
 		return "default"
 	}
+	// 安全修复：IP 地址（如 127.0.0.1、[::1]）不应反转成伪 namespace，
+	// 否则 IP 直连会得到一个无意义的租户标识并绕过 release 模式的 default 兜底
+	if net.ParseIP(host) != nil {
+		return "default"
+	}
 	parts := strings.Split(host, ".")
 	if len(parts) < 2 {
 		return "default"

@@ -21,9 +21,9 @@ func TestParseHostToNamespace_Localhost(t *testing.T) {
 }
 
 func TestParseHostToNamespace_IP(t *testing.T) {
-	// IP addresses are treated as multiple parts (e.g., 127.0.0.1 -> 1/0/0/127)
+	// 安全修复后：IP 地址返回 default，不再反转成伪 namespace（避免 IP 直连产生无意义租户标识）
 	result := ParseHostToNamespace("127.0.0.1")
-	assert.Equal(t, "1/0/0/127", result)
+	assert.Equal(t, "default", result)
 }
 
 func TestParseHostToNamespace_Empty(t *testing.T) {
