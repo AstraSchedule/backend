@@ -3,6 +3,8 @@ package client
 import (
 	"AstraScheduleServerGo/model"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -26,7 +28,32 @@ var clientWsHub = &wsHub{
 
 var wsUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		// 安全修复：校验 Origin，防止跨站 WebSocket 劫持（CSWSH）。
+		// - 无 Origin 头：非浏览器客户端（如 Electron 桌面端/Node ws 库），放行
+		// - Origin 为 file://：Electron 本地页面，放行
+		// - 其他：必须与 CORS 白名单（server.domain）中的条目协议+主机完全一致
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		originURL, err := url.Parse(origin)
+		if err != nil || originURL.Host == "" {
+			return false
+		}
+		if strings.EqualFold(originURL.Scheme, "file") {
+			return true
+		}
+		for _, allowed := range model.Configs.Server.Domain {
+			allowedURL, err := url.Parse(allowed)
+			if err != nil || allowedURL.Host == "" {
+				continue
+			}
+			if strings.EqualFold(originURL.Scheme, allowedURL.Scheme) &&
+				strings.EqualFold(originURL.Host, allowedURL.Host) {
+				return true
+			}
+		}
+		return false
 	},
 }
 
