@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	whereSchool       = "school = ?"
-	whereSchoolGrade  = "school = ? AND grade = ?"
+	whereSchool           = "school = ?"
+	whereSchoolGrade      = "school = ? AND grade = ?"
 	whereSchoolGradeClass = "school = ? AND grade = ? AND class = ?"
 )
 
@@ -43,6 +43,9 @@ func DeleteSchool(c *gin.Context) {
 		return
 	}
 
+	// 安全修复：删除必须限定当前请求的 namespace，防止跨租户删除数据
+	ns := middleware.GetNamespace(c)
+
 	tx := db.GetDB().Begin()
 	defer func() {
 		if recover() != nil {
@@ -50,12 +53,12 @@ func DeleteSchool(c *gin.Context) {
 		}
 	}()
 
-	tx.Where(whereSchool, school).Delete(&dbTable.Schedule{})
-	tx.Where(whereSchool, school).Delete(&dbTable.ClientConfig{})
-	tx.Where(whereSchool, school).Delete(&dbTable.DataVersion{})
-	tx.Where(whereSchool, school).Delete(&dbTable.Subject{})
-	tx.Where(whereSchool, school).Delete(&dbTable.Timetable{})
-	tx.Where(whereSchool, school).Delete(&dbTable.AutorunRecord{})
+	tx.Where("namespace = ?", ns).Where(whereSchool, school).Delete(&dbTable.Schedule{})
+	tx.Where("namespace = ?", ns).Where(whereSchool, school).Delete(&dbTable.ClientConfig{})
+	tx.Where("namespace = ?", ns).Where(whereSchool, school).Delete(&dbTable.DataVersion{})
+	tx.Where("namespace = ?", ns).Where(whereSchool, school).Delete(&dbTable.Subject{})
+	tx.Where("namespace = ?", ns).Where(whereSchool, school).Delete(&dbTable.Timetable{})
+	tx.Where("namespace = ?", ns).Where(whereSchool, school).Delete(&dbTable.AutorunRecord{})
 
 	if err := tx.Commit().Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -119,6 +122,9 @@ func DeleteGrade(c *gin.Context) {
 	school := c.Param("school")
 	grade := c.Param("grade")
 
+	// 安全修复：删除必须限定当前请求的 namespace，防止跨租户删除数据
+	ns := middleware.GetNamespace(c)
+
 	tx := db.GetDB().Begin()
 	defer func() {
 		if recover() != nil {
@@ -126,13 +132,13 @@ func DeleteGrade(c *gin.Context) {
 		}
 	}()
 
-	tx.Where(whereSchoolGrade, school, grade).Delete(&dbTable.Schedule{})
-	tx.Where(whereSchoolGrade, school, grade).Delete(&dbTable.ClientConfig{})
-	tx.Where(whereSchoolGrade, school, grade).Delete(&dbTable.DataVersion{})
-	tx.Where(whereSchoolGrade, school, grade).Delete(&dbTable.Subject{})
-	tx.Where(whereSchoolGrade, school, grade).Delete(&dbTable.Timetable{})
+	tx.Where("namespace = ?", ns).Where(whereSchoolGrade, school, grade).Delete(&dbTable.Schedule{})
+	tx.Where("namespace = ?", ns).Where(whereSchoolGrade, school, grade).Delete(&dbTable.ClientConfig{})
+	tx.Where("namespace = ?", ns).Where(whereSchoolGrade, school, grade).Delete(&dbTable.DataVersion{})
+	tx.Where("namespace = ?", ns).Where(whereSchoolGrade, school, grade).Delete(&dbTable.Subject{})
+	tx.Where("namespace = ?", ns).Where(whereSchoolGrade, school, grade).Delete(&dbTable.Timetable{})
 	// 删除该年级下所有班级的自动任务
-	tx.Where(whereSchoolGrade, school, grade).Delete(&dbTable.AutorunRecord{})
+	tx.Where("namespace = ?", ns).Where(whereSchoolGrade, school, grade).Delete(&dbTable.AutorunRecord{})
 
 	if err := tx.Commit().Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -228,6 +234,9 @@ func DeleteClass(c *gin.Context) {
 	grade := c.Param("grade")
 	classNumber := c.Param("class_number")
 
+	// 安全修复：删除必须限定当前请求的 namespace，防止跨租户删除数据
+	ns := middleware.GetNamespace(c)
+
 	tx := db.GetDB().Begin()
 	defer func() {
 		if recover() != nil {
@@ -235,9 +244,9 @@ func DeleteClass(c *gin.Context) {
 		}
 	}()
 
-	tx.Where(whereSchoolGradeClass, school, grade, classNumber).Delete(&dbTable.Schedule{})
-	tx.Where(whereSchoolGradeClass, school, grade, classNumber).Delete(&dbTable.ClientConfig{})
-	tx.Where(whereSchoolGradeClass, school, grade, classNumber).Delete(&dbTable.DataVersion{})
+	tx.Where("namespace = ?", ns).Where(whereSchoolGradeClass, school, grade, classNumber).Delete(&dbTable.Schedule{})
+	tx.Where("namespace = ?", ns).Where(whereSchoolGradeClass, school, grade, classNumber).Delete(&dbTable.ClientConfig{})
+	tx.Where("namespace = ?", ns).Where(whereSchoolGradeClass, school, grade, classNumber).Delete(&dbTable.DataVersion{})
 
 	if err := tx.Commit().Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
