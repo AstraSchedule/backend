@@ -29,6 +29,7 @@ func TestMain(m *testing.M) {
 		&dbTable.DataVersion{},
 		&dbTable.AutorunRecord{},
 		&dbTable.CountdownRecord{},
+		&dbTable.User{},
 	)
 
 	os.Exit(m.Run())
@@ -49,6 +50,7 @@ func setupDBSingleton(t *testing.T) *gorm.DB {
 		&dbTable.DataVersion{},
 		&dbTable.AutorunRecord{},
 		&dbTable.CountdownRecord{},
+		&dbTable.User{},
 	)
 	require.NoError(t, err)
 
