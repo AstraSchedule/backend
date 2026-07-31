@@ -46,14 +46,14 @@ func GetStatistic(c *gin.Context) {
 	})
 }
 
+// listSchools 列出学校（安全修复：namespace 为空时返回空，避免跨租户枚举）
 func listSchools(namespace string) ([]string, error) {
 	type row struct{ School string }
 	rows := make([]row, 0)
-	q := db.GetDB().Model(&dbTable.Schedule{})
-	if namespace != "" {
-		q = q.Where(whereNamespace, namespace)
+	if namespace == "" {
+		return []string{}, nil
 	}
-	err := q.Distinct("school").Find(&rows).Error
+	err := db.GetDB().Model(&dbTable.Schedule{}).Where(whereNamespace, namespace).Distinct("school").Find(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -65,14 +65,14 @@ func listSchools(namespace string) ([]string, error) {
 	return out, nil
 }
 
+// listGrades 列出年级（安全修复：namespace 为空时返回空，避免跨租户枚举）
 func listGrades(namespace, school string) ([]string, error) {
 	type row struct{ Grade string }
 	rows := make([]row, 0)
-	q := db.GetDB().Model(&dbTable.Schedule{}).Where("school = ?", school)
-	if namespace != "" {
-		q = q.Where(whereNamespace, namespace)
+	if namespace == "" {
+		return []string{}, nil
 	}
-	err := q.Distinct("grade").Find(&rows).Error
+	err := db.GetDB().Model(&dbTable.Schedule{}).Where(whereNamespace, namespace).Where("school = ?", school).Distinct("grade").Find(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -84,14 +84,14 @@ func listGrades(namespace, school string) ([]string, error) {
 	return out, nil
 }
 
+// listClasses 列出班级（安全修复：namespace 为空时返回空，避免跨租户枚举）
 func listClasses(namespace, school, grade string) ([]string, error) {
 	type row struct{ Class string }
 	rows := make([]row, 0)
-	q := db.GetDB().Model(&dbTable.Schedule{}).Where("school = ? AND grade = ?", school, grade)
-	if namespace != "" {
-		q = q.Where(whereNamespace, namespace)
+	if namespace == "" {
+		return []string{}, nil
 	}
-	err := q.Distinct("class").Find(&rows).Error
+	err := db.GetDB().Model(&dbTable.Schedule{}).Where(whereNamespace, namespace).Where("school = ? AND grade = ?", school, grade).Distinct("class").Find(&rows).Error
 	if err != nil {
 		return nil, err
 	}
