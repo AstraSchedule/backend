@@ -173,6 +173,12 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 
+	// 安全修复：用户管理必须限定当前请求的 namespace，防止跨租户修改用户
+	if user.Namespace != middleware.GetNamespace(c) {
+		c.JSON(http.StatusNotFound, gin.H{"detail": "用户不存在"})
+		return
+	}
+
 	var req updateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "无效参数"})
@@ -205,6 +211,13 @@ func DeleteUser(c *gin.Context) {
 	id, err := strconv.ParseUint(idStr, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "无效的用户 ID"})
+		return
+	}
+
+	// 安全修复：删除用户前校验其 namespace 属于当前请求租户，防止跨租户删除用户
+	user, err := db.GetUserByID(uint(id))
+	if err != nil || user.Namespace != middleware.GetNamespace(c) {
+		c.JSON(http.StatusNotFound, gin.H{"detail": "用户不存在"})
 		return
 	}
 
