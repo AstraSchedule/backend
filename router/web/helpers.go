@@ -41,8 +41,11 @@ func parseScopeInput(raw interface{}) []string {
 	}
 }
 
-func makeHashID(etype int, scope []string, level int, parameters map[string]interface{}) string {
-	sum := sha256.Sum256([]byte(strconv.Itoa(etype) + "|" + strconv.Itoa(level) + "|" + stringsFromScope(scope) + "|" + stableMapString(parameters)))
+// makeHashID 生成自动任务规则的稳定哈希 ID。
+// 安全修复：哈希输入加入 namespace，避免不同租户的相同规则产生相同 ID，
+// 防止 upsert 时跨租户互相覆盖（主键 hash_id 不含 namespace 的隔离缺陷）
+func makeHashID(ns string, etype int, scope []string, level int, parameters map[string]interface{}) string {
+	sum := sha256.Sum256([]byte(ns + "|" + strconv.Itoa(etype) + "|" + strconv.Itoa(level) + "|" + stringsFromScope(scope) + "|" + stableMapString(parameters)))
 	return hex.EncodeToString(sum[:])[:16]
 }
 

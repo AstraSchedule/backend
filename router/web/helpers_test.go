@@ -91,10 +91,21 @@ func TestMakeHashID(t *testing.T) {
 	params := map[string]interface{}{
 		"date": "2025-10-15",
 	}
-	hash1 := makeHashID(2, scope, 1, params)
-	hash2 := makeHashID(2, scope, 1, params)
+	hash1 := makeHashID("ns1", 2, scope, 1, params)
+	hash2 := makeHashID("ns1", 2, scope, 1, params)
 	assert.Equal(t, hash1, hash2)
 	assert.NotEmpty(t, hash1)
+}
+
+// 安全修复验证：不同 namespace 的相同规则必须生成不同 ID，防止跨租户覆盖
+func TestMakeHashID_SameContentDifferentNamespace(t *testing.T) {
+	scope := []string{"ALL"}
+	params := map[string]interface{}{
+		"date": "2025-10-15",
+	}
+	hashA := makeHashID("cn/getastra/tenant-a", 2, scope, 1, params)
+	hashB := makeHashID("cn/getastra/tenant-b", 2, scope, 1, params)
+	assert.NotEqual(t, hashA, hashB)
 }
 
 func TestMakeHashID_DifferentInputs(t *testing.T) {
@@ -102,8 +113,8 @@ func TestMakeHashID_DifferentInputs(t *testing.T) {
 	scope2 := []string{"school"}
 	params := map[string]interface{}{}
 
-	hash1 := makeHashID(2, scope1, 1, params)
-	hash2 := makeHashID(2, scope2, 1, params)
+	hash1 := makeHashID("ns1", 2, scope1, 1, params)
+	hash2 := makeHashID("ns1", 2, scope2, 1, params)
 	assert.NotEqual(t, hash1, hash2)
 }
 

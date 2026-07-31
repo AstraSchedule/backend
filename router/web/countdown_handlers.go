@@ -42,10 +42,13 @@ func normalizeCountdownSchedules(items []countdownScheduleInput) []dbTable.Count
 	return out
 }
 
-func makeCountdownID(scope []string, schedules []dbTable.CountdownScheduleItem) string {
+// makeCountdownID 生成倒数日记录的稳定哈希 ID。
+// 安全修复：哈希输入加入 namespace，避免不同租户的相同配置产生相同 ID，
+// 防止 upsert 时跨租户互相覆盖（主键 id 不含 namespace 的隔离缺陷）
+func makeCountdownID(ns string, scope []string, schedules []dbTable.CountdownScheduleItem) string {
 	parts := append([]string(nil), scope...)
 	sort.Strings(parts)
-	buf := strings.Join(parts, ";") + "|"
+	buf := ns + "|" + strings.Join(parts, ";") + "|"
 	for _, s := range schedules {
 		buf += s.Name + "," + s.Date + "," + strconv.Itoa(s.Priority) + ";"
 	}
@@ -177,7 +180,7 @@ func PutCountdownRule(c *gin.Context) {
 
 	recordID := strings.TrimSpace(payload.ID)
 	if recordID == "" {
-		recordID = makeCountdownID(scope, schedules)
+		recordID = makeCountdownID(ns, scope, schedules)
 	}
 	record := dbTable.CountdownRecord{
 		ID:        recordID,

@@ -54,7 +54,7 @@ func persistAutorunRule(c *gin.Context, payload autorunPayload, params map[strin
 	}
 
 	if hashID == "" {
-		hashID = makeHashID(payload.Type, scope, payload.Priority, params)
+		hashID = makeHashID(ns, payload.Type, scope, payload.Priority, params)
 	}
 	record := dbTable.AutorunRecord{HashID: hashID, Namespace: ns, EType: payload.Type, Scope: scope, Parameters: params, Level: payload.Priority, Status: 0}
 	if err := db.UpsertAutorunRecord(&record); err != nil {
