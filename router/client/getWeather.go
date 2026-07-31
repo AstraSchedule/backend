@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -158,15 +159,14 @@ func cityLookup(name, adm, host string, cfg model.APIKeyConfig) (*model.Location
 		return cachedLoc, nil
 	}
 
-	// 构建请求 URL
-	var url string
+	// 构建请求 URL（参数使用 url.Values 编码，防止 query 参数注入）
+	var urlStr string
+	query := url.Values{}
+	query.Set("location", name)
 	if adm != "" {
-		// 如果提供了省份信息
-		url = fmt.Sprintf("https://%s/geo/v2/city/lookup?location=%s&adm=%s", host, name, adm)
-	} else {
-		// 如果没有提供省份信息
-		url = fmt.Sprintf("https://%s/geo/v2/city/lookup?location=%s", host, name)
+		query.Set("adm", adm)
 	}
+	urlStr = "https://" + host + "/geo/v2/city/lookup?" + query.Encode()
 
 	// 使用 resty 发起请求
 	client := resty.New()
@@ -174,14 +174,14 @@ func cityLookup(name, adm, host string, cfg model.APIKeyConfig) (*model.Location
 	if err != nil {
 		return nil, err
 	}
-	resp, err := req.Get(url)
+	resp, err := req.Get(urlStr)
 
 	if err != nil {
 		return nil, fmt.Errorf("请求API失败: %w", err)
 	}
 
 	if resp.StatusCode() != 200 {
-		return nil, fmt.Errorf("API (%s) 请求失败，状态码: %d", url, resp.StatusCode())
+		return nil, fmt.Errorf("API (%s) 请求失败，状态码: %d", urlStr, resp.StatusCode())
 	}
 
 	var result map[string]interface{}
@@ -223,26 +223,28 @@ func cityLookup(name, adm, host string, cfg model.APIKeyConfig) (*model.Location
 		}
 	}
 
-	return nil, fmt.Errorf("未找到城市信息 (%s)", url)
+	return nil, fmt.Errorf("未找到城市信息 (%s)", urlStr)
 }
 
 // weatherLookup 查询指定位置的天气信息
 func weatherLookup(location, host string, cfg model.APIKeyConfig) (*model.WeatherResp, error) {
-	url := fmt.Sprintf("https://%s/v7/weather/now?location=%s", host, location)
+	query := url.Values{}
+	query.Set("location", location)
+	urlStr := "https://" + host + "/v7/weather/now?" + query.Encode()
 
 	client := resty.New()
 	req, err := createQWeatherRequest(client, cfg)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := req.Get(url)
+	resp, err := req.Get(urlStr)
 
 	if err != nil {
 		return nil, fmt.Errorf("请求天气API失败: %w", err)
 	}
 
 	if resp.StatusCode() != 200 {
-		return nil, fmt.Errorf("天气API (%s) 请求失败，状态码: %d", url, resp.StatusCode())
+		return nil, fmt.Errorf("天气API (%s) 请求失败，状态码: %d", urlStr, resp.StatusCode())
 	}
 
 	var result model.WeatherResp
@@ -271,21 +273,21 @@ func weatherLookupByName(name, adm, host string, cfg model.APIKeyConfig) (*model
 
 // weatherWarningLookup 查询指定位置的天气预警信息
 func weatherWarningLookup(lat, lon, host string, cfg model.APIKeyConfig) (*model.WarningResp, error) {
-	url := fmt.Sprintf("https://%s/weatheralert/v1/current/%s/%s", host, lat, lon)
+	urlStr := fmt.Sprintf("https://%s/weatheralert/v1/current/%s/%s", host, url.PathEscape(lat), url.PathEscape(lon))
 
 	client := resty.New()
 	req, err := createQWeatherRequest(client, cfg)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := req.Get(url)
+	resp, err := req.Get(urlStr)
 
 	if err != nil {
 		return nil, fmt.Errorf("请求天气预警API失败: %w", err)
 	}
 
 	if resp.StatusCode() != 200 {
-		return nil, fmt.Errorf("天气预警API (%s) 请求失败，状态码: %d", url, resp.StatusCode())
+		return nil, fmt.Errorf("天气预警API (%s) 请求失败，状态码: %d", urlStr, resp.StatusCode())
 	}
 
 	var result model.WarningResp
