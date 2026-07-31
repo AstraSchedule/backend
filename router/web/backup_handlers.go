@@ -55,10 +55,9 @@ func handleImportBackup(c *gin.Context, mode string) {
 		return
 	}
 
-	overrideNs := c.Query("namespace")
-	if overrideNs == "" {
-		overrideNs = c.PostForm("namespace")
-	}
+	// 安全修复：不再接受请求参数指定的目标 namespace（query/postForm 均可伪造），
+	// 目标租户一律取当前请求 Host 解析出的 namespace，防止跨租户覆盖数据/接管账号
+	overrideNs := middleware.GetNamespace(c)
 
 	// 自动检测自部署备份：如果备份数据没有 namespace，用请求来源的 namespace 填充
 	if overrideNs == "" && len(payload.Schedules) > 0 && payload.Schedules[0].Namespace == "" {
