@@ -26,13 +26,13 @@ func GetUserByID(id uint) (*dbTable.User, error) {
 	return user, nil
 }
 
+// ListUsers 获取用户列表（安全修复：namespace 为空时不查询，避免跨租户泄露）
 func ListUsers(namespace string) ([]dbTable.User, error) {
 	users := make([]dbTable.User, 0)
-	q := GetDB().Order("id ASC")
-	if namespace != "" {
-		q = q.Where("namespace = ?", namespace)
+	if namespace == "" {
+		return users, nil
 	}
-	err := q.Find(&users).Error
+	err := GetDB().Order("id ASC").Where("namespace = ?", namespace).Find(&users).Error
 	return users, err
 }
 
@@ -57,14 +57,13 @@ func UpsertUser(user *dbTable.User) error {
 	}).Create(user).Error
 }
 
-// CountUsers 返回指定 namespace 的用户总数
+// CountUsers 返回指定 namespace 的用户总数（安全修复：namespace 为空时返回 0）
 func CountUsers(namespace string) (int64, error) {
-	var count int64
-	q := GetDB().Model(&dbTable.User{})
-	if namespace != "" {
-		q = q.Where("namespace = ?", namespace)
+	if namespace == "" {
+		return 0, nil
 	}
-	err := q.Count(&count).Error
+	var count int64
+	err := GetDB().Model(&dbTable.User{}).Where("namespace = ?", namespace).Count(&count).Error
 	return count, err
 }
 

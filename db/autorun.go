@@ -15,12 +15,13 @@ func FetchAutorunRecords(hashid string) ([]dbTable.AutorunRecord, error) {
 }
 
 // FetchAutorunRecordsNs 获取自动任务记录（带命名空间）
+// 安全修复：namespace 为空时不查询，避免跨租户返回数据
 func FetchAutorunRecordsNs(namespace, hashid string) ([]dbTable.AutorunRecord, error) {
 	records := make([]dbTable.AutorunRecord, 0)
-	q := GetDB().Model(&dbTable.AutorunRecord{})
-	if namespace != "" {
-		q = q.Where("namespace = ?", namespace)
+	if namespace == "" {
+		return records, nil
 	}
+	q := GetDB().Model(&dbTable.AutorunRecord{}).Where("namespace = ?", namespace)
 	if hashid != "" {
 		q = q.Where(hashIDWhere, hashid)
 	}
@@ -34,12 +35,12 @@ func DeleteAutorunRecord(hashid string) (int64, error) {
 }
 
 // DeleteAutorunRecordNs 删除自动任务记录（带命名空间）
+// 安全修复：namespace 为空时不删除，避免跨租户删除
 func DeleteAutorunRecordNs(namespace, hashid string) (int64, error) {
-	q := GetDB().Where(hashIDWhere, hashid)
-	if namespace != "" {
-		q = q.Where("namespace = ?", namespace)
+	if namespace == "" {
+		return 0, nil
 	}
-	resp := q.Delete(&dbTable.AutorunRecord{})
+	resp := GetDB().Where(hashIDWhere, hashid).Where("namespace = ?", namespace).Delete(&dbTable.AutorunRecord{})
 	return resp.RowsAffected, resp.Error
 }
 

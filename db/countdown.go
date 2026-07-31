@@ -12,12 +12,13 @@ func FetchCountdownRecords(id string) ([]dbTable.CountdownRecord, error) {
 }
 
 // FetchCountdownRecordsNs 获取倒数日记录（带命名空间）
+// 安全修复：namespace 为空时不查询，避免跨租户返回数据
 func FetchCountdownRecordsNs(namespace, id string) ([]dbTable.CountdownRecord, error) {
 	records := make([]dbTable.CountdownRecord, 0)
-	q := GetDB().Model(&dbTable.CountdownRecord{})
-	if namespace != "" {
-		q = q.Where("namespace = ?", namespace)
+	if namespace == "" {
+		return records, nil
 	}
+	q := GetDB().Model(&dbTable.CountdownRecord{}).Where("namespace = ?", namespace)
 	if id != "" {
 		q = q.Where("id = ?", id)
 	}
@@ -31,12 +32,12 @@ func DeleteCountdownRecord(id string) (int64, error) {
 }
 
 // DeleteCountdownRecordNs 删除倒数日记录（带命名空间）
+// 安全修复：namespace 为空时不删除，避免跨租户删除
 func DeleteCountdownRecordNs(namespace, id string) (int64, error) {
-	q := GetDB().Where("id = ?", id)
-	if namespace != "" {
-		q = q.Where("namespace = ?", namespace)
+	if namespace == "" {
+		return 0, nil
 	}
-	resp := q.Delete(&dbTable.CountdownRecord{})
+	resp := GetDB().Where("id = ?", id).Where("namespace = ?", namespace).Delete(&dbTable.CountdownRecord{})
 	return resp.RowsAffected, resp.Error
 }
 

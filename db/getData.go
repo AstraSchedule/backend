@@ -19,13 +19,13 @@ func GetLatestVersion(school, grade, class string) *carbon.Carbon {
 }
 
 // GetLatestVersionNs 获取最新版本（带命名空间）
+// 安全修复：namespace 为空（release 模式 localhost/IP 等）时不查询，避免跨租户返回数据
 func GetLatestVersionNs(namespace, school, grade, class string) *carbon.Carbon {
-	latestVersion := &dbTable.DataVersion{}
-	if namespace != "" {
-		GetDB().Where(scopeNsClassWhere, namespace, school, grade, class).Take(latestVersion)
-	} else {
-		GetDB().Where(scopeClassWhere, school, grade, class).Take(latestVersion)
+	if namespace == "" {
+		return carbon.CreateFromTimestamp(0)
 	}
+	latestVersion := &dbTable.DataVersion{}
+	GetDB().Where(scopeNsClassWhere, namespace, school, grade, class).Take(latestVersion)
 	return carbon.CreateFromTimestamp(latestVersion.Version.Unix())
 }
 
@@ -35,12 +35,11 @@ func GetClientConfig(school, grade, class string) *dbTable.ClientConfig {
 }
 
 // GetClientConfigNs 获取客户端配置（带命名空间）
+// 安全修复：namespace 为空时不查询，避免跨租户返回数据
 func GetClientConfigNs(namespace, school, grade, class string) *dbTable.ClientConfig {
 	clientConfig := &dbTable.ClientConfig{}
 	if namespace != "" {
 		GetDB().Where(scopeNsClassWhere, namespace, school, grade, class).Take(clientConfig)
-	} else {
-		GetDB().Where(scopeClassWhere, school, grade, class).Take(clientConfig)
 	}
 	return clientConfig
 }
@@ -51,12 +50,11 @@ func GetSchedule(school, grade, class string) *dbTable.Schedule {
 }
 
 // GetScheduleNs 获取课表（带命名空间）
+// 安全修复：namespace 为空时不查询，避免跨租户返回数据
 func GetScheduleNs(namespace, school, grade, class string) *dbTable.Schedule {
 	schedule := &dbTable.Schedule{}
 	if namespace != "" {
 		GetDB().Where(scopeNsClassWhere, namespace, school, grade, class).Take(schedule)
-	} else {
-		GetDB().Where(scopeClassWhere, school, grade, class).Take(schedule)
 	}
 	return schedule
 }
@@ -67,12 +65,11 @@ func GetSubject(school, grade string) *dbTable.Subject {
 }
 
 // GetSubjectNs 获取科目配置（带命名空间）
+// 安全修复：namespace 为空时不查询，避免跨租户返回数据
 func GetSubjectNs(namespace, school, grade string) *dbTable.Subject {
 	subject := &dbTable.Subject{}
 	if namespace != "" {
 		GetDB().Where(scopeNsGradeWhere, namespace, school, grade).Take(subject)
-	} else {
-		GetDB().Where(scopeGradeWhere, school, grade).Take(subject)
 	}
 	return subject
 }
@@ -83,12 +80,11 @@ func GetTimetable(school, grade string) *dbTable.Timetable {
 }
 
 // GetTimetableNs 获取作息表（带命名空间）
+// 安全修复：namespace 为空时不查询，避免跨租户返回数据
 func GetTimetableNs(namespace, school, grade string) *dbTable.Timetable {
 	timetable := &dbTable.Timetable{}
 	if namespace != "" {
 		GetDB().Where(scopeNsGradeWhere, namespace, school, grade).Take(timetable)
-	} else {
-		GetDB().Where(scopeGradeWhere, school, grade).Take(timetable)
 	}
 	return timetable
 }

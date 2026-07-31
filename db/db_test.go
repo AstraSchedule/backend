@@ -58,23 +58,24 @@ func setupDBSingleton(t *testing.T) *gorm.DB {
 func TestGetSchedule_Found(t *testing.T) {
 	database := GetDB()
 	schedule := &dbTable.Schedule{
-		School: "school1",
-		Grade:  "grade1",
-		Class:  "class1",
+		Namespace: "ns1",
+		School:    "school1",
+		Grade:     "grade1",
+		Class:     "class1",
 		DailyClasses: [7]dbTable.DailyClass{
 			{Timetable: "常日", ClassList: dbTable.ClassList{{"数"}}},
 		},
 	}
 	database.Save(schedule)
 
-	result := GetSchedule("school1", "grade1", "class1")
+	result := GetScheduleNs("ns1", "school1", "grade1", "class1")
 	assert.NotNil(t, result)
 	assert.Equal(t, "school1", result.School)
 	assert.Equal(t, "常日", result.DailyClasses[0].Timetable)
 }
 
 func TestGetSchedule_NotFound(t *testing.T) {
-	result := GetSchedule("nonexistent", "grade", "class")
+	result := GetScheduleNs("ns1", "nonexistent", "grade", "class")
 	assert.NotNil(t, result)
 	// GORM returns empty struct, not nil
 	assert.Equal(t, "", result.School)
@@ -83,8 +84,9 @@ func TestGetSchedule_NotFound(t *testing.T) {
 func TestGetSubject_Found(t *testing.T) {
 	database := GetDB()
 	subject := &dbTable.Subject{
-		School: "school1",
-		Grade:  "grade1",
+		Namespace: "ns1",
+		School:    "school1",
+		Grade:     "grade1",
 		SubjectConfig: dbTable.SubjectConfig{
 			SubjectName: map[string]string{
 				"数": "数学",
@@ -93,7 +95,7 @@ func TestGetSubject_Found(t *testing.T) {
 	}
 	database.Save(subject)
 
-	result := GetSubject("school1", "grade1")
+	result := GetSubjectNs("ns1", "school1", "grade1")
 	assert.NotNil(t, result)
 	assert.Equal(t, "数学", result.SubjectName["数"])
 }
@@ -101,8 +103,9 @@ func TestGetSubject_Found(t *testing.T) {
 func TestGetTimetable_Found(t *testing.T) {
 	database := GetDB()
 	timetable := &dbTable.Timetable{
-		School: "school1",
-		Grade:  "grade1",
+		Namespace: "ns1",
+		School:    "school1",
+		Grade:     "grade1",
 		TimetableConfig: dbTable.TimetableConfig{
 			Timetable: map[string]map[string]interface{}{
 				"常日": {"早上1": 1},
@@ -111,7 +114,7 @@ func TestGetTimetable_Found(t *testing.T) {
 	}
 	database.Save(timetable)
 
-	result := GetTimetable("school1", "grade1")
+	result := GetTimetableNs("ns1", "school1", "grade1")
 	assert.NotNil(t, result)
 	assert.Contains(t, result.Timetable, "常日")
 }
@@ -119,13 +122,14 @@ func TestGetTimetable_Found(t *testing.T) {
 func TestGetClientConfig_Found(t *testing.T) {
 	database := GetDB()
 	config := &dbTable.ClientConfig{
-		School: "school1",
-		Grade:  "grade1",
-		Class:  "class1",
+		Namespace: "ns1",
+		School:    "school1",
+		Grade:     "grade1",
+		Class:     "class1",
 	}
 	database.Save(config)
 
-	result := GetClientConfig("school1", "grade1", "class1")
+	result := GetClientConfigNs("ns1", "school1", "grade1", "class1")
 	assert.NotNil(t, result)
 	assert.Equal(t, "school1", result.School)
 }
@@ -134,14 +138,15 @@ func TestGetLatestVersion_Found(t *testing.T) {
 	database := GetDB()
 	now := time.Now()
 	version := &dbTable.DataVersion{
-		School:  "school1",
-		Grade:   "grade1",
-		Class:   "class1",
-		Version: now,
+		Namespace: "ns1",
+		School:    "school1",
+		Grade:     "grade1",
+		Class:     "class1",
+		Version:   now,
 	}
 	database.Save(version)
 
-	result := GetLatestVersion("school1", "grade1", "class1")
+	result := GetLatestVersionNs("ns1", "school1", "grade1", "class1")
 	assert.NotNil(t, result)
 }
 
@@ -149,9 +154,10 @@ func TestUpsertAndFetchAutorunRecord(t *testing.T) {
 	setupDBSingleton(t)
 
 	record := &dbTable.AutorunRecord{
-		HashID: "hash1",
-		EType:  2,
-		Scope:  []string{"ALL"},
+		HashID:    "hash1",
+		Namespace: "ns1",
+		EType:     2,
+		Scope:     []string{"ALL"},
 		Parameters: map[string]interface{}{
 			"date": "2025-10-15",
 			"rule": map[string]interface{}{
@@ -169,7 +175,7 @@ func TestUpsertAndFetchAutorunRecord(t *testing.T) {
 	err := UpsertAutorunRecord(record)
 	assert.NoError(t, err)
 
-	records, err := FetchAutorunRecords("")
+	records, err := FetchAutorunRecordsNs("ns1", "")
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(records))
 }
@@ -178,9 +184,10 @@ func TestDeleteAutorunRecord(t *testing.T) {
 	setupDBSingleton(t)
 
 	record := &dbTable.AutorunRecord{
-		HashID: "hash-delete",
-		EType:  2,
-		Scope:  []string{"ALL"},
+		HashID:    "hash-delete",
+		Namespace: "ns1",
+		EType:     2,
+		Scope:     []string{"ALL"},
 		Parameters: map[string]interface{}{
 			"date": "2025-10-15",
 		},
@@ -188,7 +195,7 @@ func TestDeleteAutorunRecord(t *testing.T) {
 	}
 	UpsertAutorunRecord(record)
 
-	count, err := DeleteAutorunRecord("hash-delete")
+	count, err := DeleteAutorunRecordNs("ns1", "hash-delete")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 }
@@ -197,8 +204,9 @@ func TestUpsertAndFetchCountdownRecord(t *testing.T) {
 	setupDBSingleton(t)
 
 	record := &dbTable.CountdownRecord{
-		ID:    "countdown-1",
-		Scope: []string{"ALL"},
+		ID:        "countdown-1",
+		Namespace: "ns1",
+		Scope:     []string{"ALL"},
 		Schedules: []dbTable.CountdownScheduleItem{
 			{Name: "期末考试", Date: "2025-12-20", Priority: 1},
 		},
@@ -207,7 +215,7 @@ func TestUpsertAndFetchCountdownRecord(t *testing.T) {
 	err := UpsertCountdownRecord(record)
 	assert.NoError(t, err)
 
-	records, err := FetchCountdownRecords("")
+	records, err := FetchCountdownRecordsNs("ns1", "")
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(records))
 }
@@ -216,15 +224,16 @@ func TestDeleteCountdownRecord(t *testing.T) {
 	setupDBSingleton(t)
 
 	record := &dbTable.CountdownRecord{
-		ID:    "countdown-delete",
-		Scope: []string{"ALL"},
+		ID:        "countdown-delete",
+		Namespace: "ns1",
+		Scope:     []string{"ALL"},
 		Schedules: []dbTable.CountdownScheduleItem{
 			{Name: "运动会", Date: "2025-11-01", Priority: 1},
 		},
 	}
 	UpsertCountdownRecord(record)
 
-	count, err := DeleteCountdownRecord("countdown-delete")
+	count, err := DeleteCountdownRecordNs("ns1", "countdown-delete")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 }
@@ -319,6 +328,7 @@ func TestFetchAutorunRecords_WithHashID(t *testing.T) {
 
 	record := &dbTable.AutorunRecord{
 		HashID:     "hash-filter",
+		Namespace:  "ns1",
 		EType:      2,
 		Scope:      []string{"ALL"},
 		Parameters: map[string]interface{}{"date": "2025-10-15"},
@@ -326,7 +336,7 @@ func TestFetchAutorunRecords_WithHashID(t *testing.T) {
 	}
 	UpsertAutorunRecord(record)
 
-	records, err := FetchAutorunRecords("hash-filter")
+	records, err := FetchAutorunRecordsNs("ns1", "hash-filter")
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(records))
 	assert.Equal(t, "hash-filter", records[0].HashID)
@@ -338,15 +348,16 @@ func TestFetchCountdownRecords_WithID(t *testing.T) {
 	setupDBSingleton(t)
 
 	record := &dbTable.CountdownRecord{
-		ID:    "countdown-filter",
-		Scope: []string{"ALL"},
+		ID:        "countdown-filter",
+		Namespace: "ns1",
+		Scope:     []string{"ALL"},
 		Schedules: []dbTable.CountdownScheduleItem{
 			{Name: "测试", Date: "2025-12-20", Priority: 1},
 		},
 	}
 	UpsertCountdownRecord(record)
 
-	records, err := FetchCountdownRecords("countdown-filter")
+	records, err := FetchCountdownRecordsNs("ns1", "countdown-filter")
 	assert.NoError(t, err)
 	assert.Equal(t, 1, len(records))
 	assert.Equal(t, "countdown-filter", records[0].ID)
@@ -359,6 +370,7 @@ func TestUpsertAutorunRecord_Update(t *testing.T) {
 
 	record := &dbTable.AutorunRecord{
 		HashID:     "hash-update",
+		Namespace:  "ns1",
 		EType:      2,
 		Scope:      []string{"ALL"},
 		Parameters: map[string]interface{}{"date": "2025-10-15"},
@@ -373,7 +385,7 @@ func TestUpsertAutorunRecord_Update(t *testing.T) {
 	err := UpsertAutorunRecord(record)
 	assert.NoError(t, err)
 
-	records, _ := FetchAutorunRecords("hash-update")
+	records, _ := FetchAutorunRecordsNs("ns1", "hash-update")
 	assert.Equal(t, 2, records[0].Level)
 	assert.Equal(t, 1, records[0].Status)
 }
