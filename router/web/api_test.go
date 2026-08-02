@@ -8,7 +8,10 @@ import (
 	"testing"
 
 	"AstraScheduleServerGo/db"
+	"AstraScheduleServerGo/middleware"
+	"AstraScheduleServerGo/model"
 	"AstraScheduleServerGo/model/dbTable"
+	"AstraScheduleServerGo/service"
 	"AstraScheduleServerGo/testutil"
 
 	"github.com/gin-gonic/gin"
@@ -66,6 +69,48 @@ func TestGetStatistic_Success(t *testing.T) {
 	assert.Contains(t, resp, "clients_count")
 	assert.IsType(t, map[string]interface{}{}, resp["websocket_disconnect"])
 	assert.IsType(t, []interface{}{}, resp["clients"])
+}
+
+func TestGetStatistic_Auth(t *testing.T) {
+	ensureTestDB()
+	router := setupTestRouter()
+	// 模拟 main.go 的 jwtAuth 组：/web/statistic 需 JWT 认证
+	router.GET("/web/statistic", middleware.JWTAuthMiddleware(), GetStatistic)
+
+	// 无 token -> 401
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/web/statistic", nil)
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+
+	// 无效 token -> 401
+	w2 := httptest.NewRecorder()
+	req2, _ := http.NewRequest("GET", "/web/statistic", nil)
+	req2.Header.Set("Authorization", "Bearer invalid.token.here")
+	router.ServeHTTP(w2, req2)
+	assert.Equal(t, http.StatusUnauthorized, w2.Code)
+
+	// 有效 token（namespace 与请求 Host 解析一致，无 Host 时 GetNamespace 返回 "default"）-> 200
+	token, err := service.GenerateToken(model.Configs.Secret.Token, 1, "default", "admin", "admin", "", 1)
+	assert.NoError(t, err)
+	w3 := httptest.NewRecorder()
+	req3, _ := http.NewRequest("GET", "/web/statistic", nil)
+	req3.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w3, req3)
+	assert.Equal(t, http.StatusOK, w3.Code)
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w3.Body.Bytes(), &resp))
+	assert.Contains(t, resp, "weather_error")
+	assert.Contains(t, resp, "clients_count")
+
+	// 跨租户 token（claims.Namespace 与 Host 解析不一致）-> 403
+	token2, err := service.GenerateToken(model.Configs.Secret.Token, 1, "other-ns", "admin", "admin", "", 1)
+	assert.NoError(t, err)
+	w4 := httptest.NewRecorder()
+	req4, _ := http.NewRequest("GET", "/web/statistic", nil)
+	req4.Header.Set("Authorization", "Bearer "+token2)
+	router.ServeHTTP(w4, req4)
+	assert.Equal(t, http.StatusForbidden, w4.Code)
 }
 
 func TestGetMenu_Empty(t *testing.T) {
