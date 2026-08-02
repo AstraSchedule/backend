@@ -34,6 +34,15 @@ func TestStatCollector_RecordAndSnapshot(t *testing.T) {
 	weB, disB := statSnapshot("ns-b")
 	assert.Equal(t, 1, weB)
 	assert.Equal(t, map[string]int{"7/2026/1": 1}, disB)
+
+	// 空 namespace 与 "default" 读写一致（release 模式下 GetNamespace 可能返回空串）
+	recordWeatherError("")
+	recordWSDisconnect("", "39/2023/1")
+	weD, disD := statSnapshot("default")
+	assert.Equal(t, 1, weD)
+	assert.Equal(t, map[string]int{"39/2023/1": 1}, disD)
+	weE, _ := statSnapshot("")
+	assert.Equal(t, 1, weE)
 }
 
 func TestStatCollector_Rollover(t *testing.T) {
