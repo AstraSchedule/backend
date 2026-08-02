@@ -2,6 +2,7 @@ package client
 
 import (
 	"AstraScheduleServerGo/model"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -103,6 +104,20 @@ func (h *wsHub) snapshot(scope wsScope) []*websocket.Conn {
 	return out
 }
 
+// onlineClasses 返回在线客户端的班级标识集合（school/grade/class）。
+// main 分支 wsScope 无 namespace 概念，namespace 参数保留以兼容 saas/main 的按租户过滤。
+func (h *wsHub) onlineClasses(namespace string) map[string]bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	out := map[string]bool{}
+	for scope, group := range h.clients {
+		for _, classNumber := range group {
+			out[fmt.Sprintf("%s/%s/%s", scope.School, scope.Grade, classNumber)] = true
+		}
+	}
+	return out
+}
+
 func (h *wsHub) broadcast(scope wsScope, message string) int {
 	conns := h.snapshot(scope)
 	if len(conns) == 0 {
@@ -175,6 +190,7 @@ func WebSocketPlaceholder(c *gin.Context) {
 	defer func() {
 		clientWsHub.remove(scope, conn)
 		_ = conn.Close()
+		recordWSDisconnect(requestNamespace(c), fmt.Sprintf("%s/%s/%s", school, grade, classNumber))
 		logrus.Infof("WebSocket 连接断开：%s 学校 %s 级 %s 班，当前级部连接数=%d", school, grade, classNumber, clientWsHub.count(scope))
 	}()
 

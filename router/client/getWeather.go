@@ -346,6 +346,7 @@ func tryGetWeatherOnce(c *gin.Context, name, province, host string, apiCfg model
 	resp, err := weatherLookupByName(name, province, host, apiCfg)
 	if err != nil {
 		logrus.Errorf("获取天气信息失败: %v", err)
+		recordWeatherError(requestNamespace(c))
 		return false
 	}
 
@@ -365,6 +366,7 @@ func tryGetWeatherOnce(c *gin.Context, name, province, host string, apiCfg model
 }
 
 func handleWeatherError(c *gin.Context, err error) {
+	recordWeatherError(requestNamespace(c))
 	if errors.Is(err, errNoQWeatherCredential) {
 		logrus.Errorf("天气认证未配置: %v", err)
 		c.JSON(http.StatusForbidden, gin.H{

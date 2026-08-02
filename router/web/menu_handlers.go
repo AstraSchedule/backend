@@ -4,6 +4,7 @@ import (
 	"AstraScheduleServerGo/db"
 	"AstraScheduleServerGo/model"
 	"AstraScheduleServerGo/model/dbTable"
+	"AstraScheduleServerGo/router/client"
 	"net/http"
 	"sort"
 
@@ -34,12 +35,19 @@ func configBasePath(school, grade string) string {
 }
 
 func GetStatistic(c *gin.Context) {
+	ns := "default" // main 分支无多租户概念；saas/main 分支改为 middleware.GetNamespace(c)
+	weatherErr, disconnects := client.StatSnapshot(ns)
+	totalDisconnect := 0
+	for _, v := range disconnects {
+		totalDisconnect += v
+	}
+	clients := client.StatOnlineClasses(ns)
 	c.JSON(http.StatusOK, gin.H{
-		"weather_error":              0,
-		"websocket_disconnect":       gin.H{},
-		"websocket_disconnect_count": 0,
-		"clients":                    []string{},
-		"clients_count":              0,
+		"weather_error":              weatherErr,
+		"websocket_disconnect":       disconnects,
+		"websocket_disconnect_count": totalDisconnect,
+		"clients":                    clients,
+		"clients_count":              len(clients),
 		"serverless":                 model.Configs.Run.Serverless,
 	})
 }
