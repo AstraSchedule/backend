@@ -41,6 +41,7 @@ func main() {
 
 	// 用户信息与改密（需 JWT）
 	jwtAuth.GET("/web/auth/me", web.GetMe)
+	jwtAuth.GET("/web/statistic", web.GetStatistic)
 	jwtAuth.POST("/web/auth/change-password", web.ChangePassword)
 	jwtAuth.POST("/web/auth/verify-password", web.VerifyPassword)
 
@@ -75,8 +76,7 @@ func main() {
 	// 广播
 	secureWrite.POST("/api/broadcast/:school/:grade/:class_number", client.BroadcastSyncConfig)
 
-	// 统计/菜单/结构
-	router.GET("/web/statistic", web.GetStatistic)
+	// 菜单/结构（读接口，与既有模式一致）；statistic 需 JWT 认证（防跨租户泄露）
 	router.GET("/web/menu", web.GetMenu)
 	router.GET("/web/structure", web.GetStructure)
 	secureWrite.GET("/web/backup/export", web.ExportBackup)
