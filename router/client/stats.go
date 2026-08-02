@@ -41,6 +41,9 @@ func (s *statCollector) rolloverLocked(now time.Time) {
 
 // recordWeatherError 记录一次天气上游请求错误（按 namespace 隔离）。
 func recordWeatherError(namespace string) {
+	if namespace == "" {
+		namespace = "default"
+	}
 	collector.mu.Lock()
 	defer collector.mu.Unlock()
 	collector.rolloverLocked(time.Now())
@@ -50,6 +53,9 @@ func recordWeatherError(namespace string) {
 // recordWSDisconnect 记录一次 WebSocket 断开（按 namespace + 班级隔离）。
 // classKey 形如 school/grade/class。
 func recordWSDisconnect(namespace, classKey string) {
+	if namespace == "" {
+		namespace = "default"
+	}
 	collector.mu.Lock()
 	defer collector.mu.Unlock()
 	collector.rolloverLocked(time.Now())

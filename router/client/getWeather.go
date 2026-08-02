@@ -346,6 +346,7 @@ func tryGetWeatherOnce(c *gin.Context, name, province, host string, apiCfg model
 	resp, err := weatherLookupByName(name, province, host, apiCfg)
 	if err != nil {
 		logrus.Errorf("获取天气信息失败: %v", err)
+		// 每次重试失败各计一次，语义为「天气上游请求失败次数」
 		recordWeatherError(requestNamespace(c))
 		return false
 	}
@@ -366,7 +367,6 @@ func tryGetWeatherOnce(c *gin.Context, name, province, host string, apiCfg model
 }
 
 func handleWeatherError(c *gin.Context, err error) {
-	recordWeatherError(requestNamespace(c))
 	if errors.Is(err, errNoQWeatherCredential) {
 		logrus.Errorf("天气认证未配置: %v", err)
 		c.JSON(http.StatusForbidden, gin.H{
@@ -374,6 +374,8 @@ func handleWeatherError(c *gin.Context, err error) {
 		})
 		return
 	}
+	// 天气认证配置缺失不计数（属配置问题而非上游错误），避免管理端误报
+	recordWeatherError(requestNamespace(c))
 	logrus.Errorf("获取城市位置失败: %v", err)
 	c.JSON(http.StatusNotFound, gin.H{
 		"temp":       "404",
