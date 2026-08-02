@@ -1,6 +1,7 @@
 package client
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -43,6 +44,20 @@ func TestStatCollector_RecordAndSnapshot(t *testing.T) {
 	assert.Equal(t, map[string]int{"39/2023/1": 1}, disD)
 	weE, _ := statSnapshot("")
 	assert.Equal(t, 1, weE)
+}
+
+func TestStatCollector_RejectsOversizedClassKey(t *testing.T) {
+	resetCollectorForTest()
+
+	// 超长 classKey 直接拒绝，防伪造路径参数打爆内存
+	recordWSDisconnect("ns-a", strings.Repeat("x", maxClassKeyLen+1))
+	_, dis := statSnapshot("ns-a")
+	assert.Equal(t, map[string]int{}, dis)
+
+	// 正常 key 不受影响
+	recordWSDisconnect("ns-a", "39/2023/1")
+	_, dis2 := statSnapshot("ns-a")
+	assert.Equal(t, map[string]int{"39/2023/1": 1}, dis2)
 }
 
 func TestStatCollector_Rollover(t *testing.T) {

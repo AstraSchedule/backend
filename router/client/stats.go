@@ -18,6 +18,14 @@ func requestNamespace(c *gin.Context) string {
 //
 // main 分支无 namespace 多租户概念，namespace 恒为 middleware.GetNamespace 的返回值
 // （非 release 模式默认 "default"）；saas/main 分支为真实租户命名空间。
+//
+// 防滥用：namespace/班级 key 均设数量与长度上限，避免伪造 Host/路径参数打爆内存（DoS）。
+const (
+	maxStatNamespaces = 1000 // weatherErrors 的 namespace key 上限
+	maxClassKeys      = 5000 // 每个 namespace 下班级 key 上限
+	maxClassKeyLen    = 200  // classKey 最大长度
+)
+
 type statCollector struct {
 	mu            sync.Mutex
 	day           string
@@ -47,6 +55,10 @@ func recordWeatherError(namespace string) {
 	collector.mu.Lock()
 	defer collector.mu.Unlock()
 	collector.rolloverLocked(time.Now())
+	// 已有 key 计数不受限；仅拒绝新增超限 key，防止伪造 Host 无限膨胀
+	if _, ok := collector.weatherErrors[namespace]; !ok && len(collector.weatherErrors) >= maxStatNamespaces {
+		return
+	}
 	collector.weatherErrors[namespace]++
 }
 
@@ -56,6 +68,9 @@ func recordWSDisconnect(namespace, classKey string) {
 	if namespace == "" {
 		namespace = "default"
 	}
+	if len(classKey) == 0 || len(classKey) > maxClassKeyLen {
+		return
+	}
 	collector.mu.Lock()
 	defer collector.mu.Unlock()
 	collector.rolloverLocked(time.Now())
@@ -63,6 +78,10 @@ func recordWSDisconnect(namespace, classKey string) {
 	if m == nil {
 		m = map[string]int{}
 		collector.wsDisconnects[namespace] = m
+	}
+	// 已有 key 计数不受限；仅拒绝新增超限 key，防止伪造班级路径无限膨胀
+	if _, ok := m[classKey]; !ok && len(m) >= maxClassKeys {
+		return
 	}
 	m[classKey]++
 }
