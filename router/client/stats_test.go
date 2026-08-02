@@ -1,6 +1,7 @@
 package client
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -66,6 +67,35 @@ func TestStatCollector_RejectsOversizedClassKey(t *testing.T) {
 	recordWSDisconnect("ns-a", "39/2023/1")
 	_, dis3 := statSnapshot("ns-a")
 	assert.Equal(t, map[string]int{"39/2023/1": 1}, dis3)
+}
+
+func TestStatCollector_KeyLimits(t *testing.T) {
+	resetCollectorForTest()
+
+	// maxClassKeys：每个 namespace 最多 maxClassKeys 个班级 key，超限新 key 被拒
+	for i := 0; i < maxClassKeys; i++ {
+		recordWSDisconnect("limit-a", fmt.Sprintf("s/g/%d", i))
+	}
+	recordWSDisconnect("limit-a", "s/g/overflow")
+	_, dis := statSnapshot("limit-a")
+	assert.Len(t, dis, maxClassKeys)
+	assert.NotContains(t, dis, "s/g/overflow")
+	// 已有 key 计数不受限，仍递增
+	recordWSDisconnect("limit-a", "s/g/0")
+	_, dis2 := statSnapshot("limit-a")
+	assert.Equal(t, 2, dis2["s/g/0"])
+
+	// maxStatNamespaces：weatherErrors 最多 maxStatNamespaces 个 namespace，超限新 namespace 被拒
+	for i := 0; i < maxStatNamespaces; i++ {
+		recordWeatherError(fmt.Sprintf("limit-ns-%d", i))
+	}
+	recordWeatherError("limit-ns-overflow")
+	we, _ := statSnapshot("limit-ns-overflow")
+	assert.Equal(t, 0, we)
+	// 已有 namespace 计数不受限
+	recordWeatherError("limit-ns-0")
+	we2, _ := statSnapshot("limit-ns-0")
+	assert.Equal(t, 2, we2)
 }
 
 func TestStatCollector_Rollover(t *testing.T) {
