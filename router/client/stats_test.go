@@ -60,24 +60,23 @@ func TestHubOnlineClasses(t *testing.T) {
 	c2 := &websocket.Conn{}
 	c3 := &websocket.Conn{}
 	c4 := &websocket.Conn{}
-	clientWsHub.add(wsScope{School: "39", Grade: "2023"}, "1", c1)
-	clientWsHub.add(wsScope{School: "39", Grade: "2023"}, "1", c2) // 同班两个连接
-	clientWsHub.add(wsScope{School: "39", Grade: "2023"}, "2", c3)
-	clientWsHub.add(wsScope{School: "7", Grade: "2026"}, "1", c4)
+	clientWsHub.add(wsScope{Namespace: "ns-a", School: "39", Grade: "2023"}, "1", c1)
+	clientWsHub.add(wsScope{Namespace: "ns-a", School: "39", Grade: "2023"}, "1", c2) // 同班两个连接
+	clientWsHub.add(wsScope{Namespace: "ns-a", School: "39", Grade: "2023"}, "2", c3)
+	clientWsHub.add(wsScope{Namespace: "ns-b", School: "7", Grade: "2026"}, "1", c4)
 	defer func() {
-		clientWsHub.remove(wsScope{School: "39", Grade: "2023"}, c1)
-		clientWsHub.remove(wsScope{School: "39", Grade: "2023"}, c2)
-		clientWsHub.remove(wsScope{School: "39", Grade: "2023"}, c3)
-		clientWsHub.remove(wsScope{School: "7", Grade: "2026"}, c4)
+		clientWsHub.remove(wsScope{Namespace: "ns-a", School: "39", Grade: "2023"}, c1)
+		clientWsHub.remove(wsScope{Namespace: "ns-a", School: "39", Grade: "2023"}, c2)
+		clientWsHub.remove(wsScope{Namespace: "ns-a", School: "39", Grade: "2023"}, c3)
+		clientWsHub.remove(wsScope{Namespace: "ns-b", School: "7", Grade: "2026"}, c4)
 	}()
 
-	classes := clientWsHub.onlineClasses("default")
+	// 按 namespace 过滤：ns-a 下在线班级为 39/2023/1（两个连接去重）与 39/2023/2
+	classes := clientWsHub.onlineClasses("ns-a")
 	assert.Equal(t, map[string]bool{
 		"39/2023/1": true,
 		"39/2023/2": true,
-		"7/2026/1":  true,
 	}, classes)
-
-	// main 分支 wsScope 无 namespace 概念，onlineClasses 忽略 namespace 参数，返回全部在线班级
-	assert.Equal(t, classes, clientWsHub.onlineClasses("other-ns"))
+	assert.Equal(t, map[string]bool{"7/2026/1": true}, clientWsHub.onlineClasses("ns-b"))
+	assert.Equal(t, map[string]bool{}, clientWsHub.onlineClasses("other-ns"))
 }

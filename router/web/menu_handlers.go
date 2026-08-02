@@ -37,7 +37,7 @@ func configBasePath(school, grade string) string {
 }
 
 func GetStatistic(c *gin.Context) {
-	ns := "default" // main 分支无多租户概念；saas/main 分支改为 middleware.GetNamespace(c)
+	ns := middleware.GetNamespace(c)
 	weatherErr, disconnects := client.StatSnapshot(ns)
 	totalDisconnect := 0
 	for _, v := range disconnects {

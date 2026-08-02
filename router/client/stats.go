@@ -1,6 +1,7 @@
 package client
 
 import (
+	"AstraScheduleServerGo/middleware"
 	"sort"
 	"sync"
 	"time"
@@ -8,10 +9,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// requestNamespace 返回请求所属的 namespace。
-// main 分支无多租户概念，恒为 "default"；saas/main 分支改为 middleware.GetNamespace(c)。
+// requestNamespace 返回请求所属的 namespace（SaaS 多租户：从 Host 头解析）。
 func requestNamespace(c *gin.Context) string {
-	return "default"
+	return middleware.GetNamespace(c)
 }
 
 // statCollector 采集实时统计指标：内存态、当日计数、跨天自动重置、按 namespace 隔离。

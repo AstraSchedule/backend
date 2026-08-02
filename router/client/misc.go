@@ -106,13 +106,15 @@ func (h *wsHub) snapshot(scope wsScope) []*websocket.Conn {
 	return out
 }
 
-// onlineClasses 返回在线客户端的班级标识集合（school/grade/class）。
-// main 分支 wsScope 无 namespace 概念，namespace 参数保留以兼容 saas/main 的按租户过滤。
+// onlineClasses 返回指定 namespace 下在线客户端的班级标识集合（school/grade/class）。
 func (h *wsHub) onlineClasses(namespace string) map[string]bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	out := map[string]bool{}
 	for scope, group := range h.clients {
+		if scope.Namespace != namespace {
+			continue
+		}
 		for _, classNumber := range group {
 			out[fmt.Sprintf("%s/%s/%s", scope.School, scope.Grade, classNumber)] = true
 		}
