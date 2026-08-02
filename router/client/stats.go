@@ -53,6 +53,9 @@ func recordWeatherError(namespace string) {
 	if namespace == "" {
 		namespace = "default"
 	}
+	if len(namespace) > maxNamespaceLen {
+		return
+	}
 	collector.mu.Lock()
 	defer collector.mu.Unlock()
 	collector.rolloverLocked(time.Now())
