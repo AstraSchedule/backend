@@ -193,7 +193,7 @@
     "/web/statistic": {
       "get": {
         "summary": "获取统计信息",
-        "description": "返回天气错误次数、WebSocket 断开统计、当前连接客户端列表等。",
+        "description": "返回天气错误次数、WebSocket 断开统计、当前连接客户端列表等。需 JWT 认证（jwtAuth）。",
         "operationId": "getStatistic",
         "tags": ["web-menu"],
         "parameters": [],
@@ -207,7 +207,7 @@
             }
           }
         },
-        "security": []
+        "security": [{ "jwtAuth": [] }]
       }
     },
     "/web/menu": {
