@@ -58,6 +58,14 @@ func TestGetStatistic_Success(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.Equal(t, false, resp["serverless"])
+	// 响应应包含完整统计字段（数值不在此处断言：与 client 包测试并行运行时采集器可能被写入）
+	assert.Contains(t, resp, "weather_error")
+	assert.Contains(t, resp, "websocket_disconnect")
+	assert.Contains(t, resp, "websocket_disconnect_count")
+	assert.Contains(t, resp, "clients")
+	assert.Contains(t, resp, "clients_count")
+	assert.IsType(t, map[string]interface{}{}, resp["websocket_disconnect"])
+	assert.IsType(t, []interface{}{}, resp["clients"])
 }
 
 func TestGetMenu_Empty(t *testing.T) {
