@@ -69,6 +69,9 @@ func recordWSDisconnect(namespace, classKey string) {
 
 // statSnapshot 返回指定 namespace 的统计快照：天气错误总数与班级断连映射。
 func statSnapshot(namespace string) (weatherError int, disconnects map[string]int) {
+	if namespace == "" {
+		namespace = "default"
+	}
 	collector.mu.Lock()
 	defer collector.mu.Unlock()
 	collector.rolloverLocked(time.Now())
