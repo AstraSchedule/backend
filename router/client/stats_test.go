@@ -54,10 +54,18 @@ func TestStatCollector_RejectsOversizedClassKey(t *testing.T) {
 	_, dis := statSnapshot("ns-a")
 	assert.Equal(t, map[string]int{}, dis)
 
+	// 超长 namespace 直接拒绝（天气错误与断连记录均需防护）
+	recordWeatherError(strings.Repeat("y", maxNamespaceLen+1))
+	we, _ := statSnapshot("default")
+	assert.Equal(t, 0, we)
+	recordWSDisconnect(strings.Repeat("z", maxNamespaceLen+1), "39/2023/1")
+	_, dis2 := statSnapshot("default")
+	assert.Equal(t, map[string]int{}, dis2)
+
 	// 正常 key 不受影响
 	recordWSDisconnect("ns-a", "39/2023/1")
-	_, dis2 := statSnapshot("ns-a")
-	assert.Equal(t, map[string]int{"39/2023/1": 1}, dis2)
+	_, dis3 := statSnapshot("ns-a")
+	assert.Equal(t, map[string]int{"39/2023/1": 1}, dis3)
 }
 
 func TestStatCollector_Rollover(t *testing.T) {
