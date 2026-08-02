@@ -21,9 +21,10 @@ func requestNamespace(c *gin.Context) string {
 //
 // 防滥用：namespace/班级 key 均设数量与长度上限，避免伪造 Host/路径参数打爆内存（DoS）。
 const (
-	maxStatNamespaces = 1000 // weatherErrors 的 namespace key 上限
+	maxStatNamespaces = 1000 // weatherErrors / wsDisconnects 的 namespace key 上限
 	maxClassKeys      = 5000 // 每个 namespace 下班级 key 上限
 	maxClassKeyLen    = 200  // classKey 最大长度
+	maxNamespaceLen   = 128  // namespace 最大长度（与 dbTable namespace size 一致）
 )
 
 type statCollector struct {
@@ -68,12 +69,16 @@ func recordWSDisconnect(namespace, classKey string) {
 	if namespace == "" {
 		namespace = "default"
 	}
-	if len(classKey) == 0 || len(classKey) > maxClassKeyLen {
+	if len(namespace) > maxNamespaceLen || len(classKey) == 0 || len(classKey) > maxClassKeyLen {
 		return
 	}
 	collector.mu.Lock()
 	defer collector.mu.Unlock()
 	collector.rolloverLocked(time.Now())
+	// 外层 namespace key 同样设上限，防伪造 Host 单日膨胀外层 map（DoS）
+	if _, ok := collector.wsDisconnects[namespace]; !ok && len(collector.wsDisconnects) >= maxStatNamespaces {
+		return
+	}
 	m := collector.wsDisconnects[namespace]
 	if m == nil {
 		m = map[string]int{}
