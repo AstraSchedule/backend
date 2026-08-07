@@ -1,46 +1,18 @@
 package db
 
 import (
-	"AstraScheduleServerGo/model"
 	"AstraScheduleServerGo/model/dbTable"
+	"AstraScheduleServerGo/testutil"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-
-	gormsqlite "github.com/libtnb/sqlite"
 )
 
 func TestMain(m *testing.M) {
-	// Set up config for db package to use SQLite
-	model.Configs = model.SrvConfig{
-		Server: model.ServerConfig{
-			Host:   "127.0.0.1",
-			Port:   9000,
-			Domain: []string{"http://localhost:5173"},
-		},
-		Secret: model.SecretConfig{
-			Token: "test-token-123",
-		},
-		Db: model.DbConfig{
-			Type: "sqlite",
-			Path: ":memory:",
-		},
-		APIKey: model.APIKeyConfig{
-			APIHost: "https://geoapi.qweather.com",
-			Weather: "test-weather-key",
-		},
-		Log: model.LogConfig{
-			Debug: true,
-		},
-		Run: model.RunConfig{
-			Serverless: false,
-		},
-	}
+	// 使用测试配置（SQLite 内存库）
+	testutil.InitTestDB()
 
 	// Initialize the database connection and create tables
 	database := GetDB()
@@ -58,26 +30,18 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func setupDBSingleton(t *testing.T) *gorm.DB {
-	t.Helper()
-	database, err := gorm.Open(gormsqlite.Open(":memory:"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	require.NoError(t, err)
-
-	err = database.AutoMigrate(
-		&dbTable.Schedule{},
-		&dbTable.ClientConfig{},
-		&dbTable.Timetable{},
-		&dbTable.Subject{},
-		&dbTable.DataVersion{},
-		&dbTable.AutorunRecord{},
-		&dbTable.CountdownRecord{},
-		&dbTable.User{},
-	)
-	require.NoError(t, err)
-
-	return database
+// cleanupDB 删除所有数据，保证测试之间隔离
+func cleanupDB(t *testing.T) {
+	db := GetDB()
+	tables := []string{
+		"schedules", "client_configs", "timetables", "subjects", "data_versions",
+		"autorun_records", "countdown_records", "users",
+	}
+	for _, table := range tables {
+		if err := db.Exec("DELETE FROM " + table).Error; err != nil {
+			t.Fatalf("failed to clean table %s: %v", table, err)
+		}
+	}
 }
 
 func TestGetSchedule_Found(t *testing.T) {
@@ -171,8 +135,7 @@ func TestGetLatestVersion_Found(t *testing.T) {
 }
 
 func TestUpsertAndFetchAutorunRecord(t *testing.T) {
-	database := setupDBSingleton(t)
-	_ = database
+	defer cleanupDB(t)
 
 	record := &dbTable.AutorunRecord{
 		HashID: "hash1",
@@ -201,8 +164,7 @@ func TestUpsertAndFetchAutorunRecord(t *testing.T) {
 }
 
 func TestDeleteAutorunRecord(t *testing.T) {
-	database := setupDBSingleton(t)
-	_ = database
+	defer cleanupDB(t)
 
 	record := &dbTable.AutorunRecord{
 		HashID: "hash-delete",
@@ -221,8 +183,7 @@ func TestDeleteAutorunRecord(t *testing.T) {
 }
 
 func TestUpsertAndFetchCountdownRecord(t *testing.T) {
-	database := setupDBSingleton(t)
-	_ = database
+	defer cleanupDB(t)
 
 	record := &dbTable.CountdownRecord{
 		ID:    "countdown-1",
@@ -241,8 +202,7 @@ func TestUpsertAndFetchCountdownRecord(t *testing.T) {
 }
 
 func TestDeleteCountdownRecord(t *testing.T) {
-	database := setupDBSingleton(t)
-	_ = database
+	defer cleanupDB(t)
 
 	record := &dbTable.CountdownRecord{
 		ID:    "countdown-delete",
@@ -261,8 +221,7 @@ func TestDeleteCountdownRecord(t *testing.T) {
 // FetchAutorunRecords with hashid filter
 
 func TestFetchAutorunRecords_WithHashID(t *testing.T) {
-	database := setupDBSingleton(t)
-	_ = database
+	defer cleanupDB(t)
 
 	record := &dbTable.AutorunRecord{
 		HashID:     "hash-filter",
@@ -282,8 +241,7 @@ func TestFetchAutorunRecords_WithHashID(t *testing.T) {
 // FetchCountdownRecords with id filter
 
 func TestFetchCountdownRecords_WithID(t *testing.T) {
-	database := setupDBSingleton(t)
-	_ = database
+	defer cleanupDB(t)
 
 	record := &dbTable.CountdownRecord{
 		ID:    "countdown-filter",
@@ -303,8 +261,7 @@ func TestFetchCountdownRecords_WithID(t *testing.T) {
 // Upsert update existing record
 
 func TestUpsertAutorunRecord_Update(t *testing.T) {
-	database := setupDBSingleton(t)
-	_ = database
+	defer cleanupDB(t)
 
 	record := &dbTable.AutorunRecord{
 		HashID:     "hash-update",
@@ -336,15 +293,10 @@ func TestExportBackup_Empty(t *testing.T) {
 	assert.Equal(t, 1, payload.Meta.SchemaVersion)
 }
 
-func TestExportBackupNs_Empty(t *testing.T) {
-	// ExportBackupNs requires namespace filter, but autorun_records table may not have created_at column
-	// Skip this test on main branch due to schema differences
-	t.Skip("Skipping due to schema differences on main branch")
-}
-
 func TestImportBackup_Overwrite(t *testing.T) {
-	database := setupDBSingleton(t)
-	_ = database
+	defer cleanupDB(t)
+
+	database := GetDB()
 
 	// Create some test data
 	schedule := &dbTable.Schedule{

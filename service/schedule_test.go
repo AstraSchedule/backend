@@ -34,7 +34,7 @@ func TestCalcWeekNumber_SecondWeek(t *testing.T) {
 	assert.Equal(t, 2, result)
 }
 
-func TestCalcWeekNumber_FifthWeek(t *testing.T) {
+func TestCalcWeekNumber_SixthWeek(t *testing.T) {
 	start := time.Date(2025, 9, 1, 0, 0, 0, 0, time.UTC)
 	now := start.Add(35 * 24 * time.Hour) // 35 days later
 	result := CalcWeekNumber("2025-09-01", now)

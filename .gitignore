@@ -12,3 +12,4 @@ temp
 .otel-build/
 arms_cache/
 arms_log/
+.codegraph/
