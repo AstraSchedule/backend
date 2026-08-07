@@ -26,6 +26,9 @@ var cache sync.Map
 
 var errNoQWeatherCredential = errors.New("和风天气认证信息未配置")
 
+// newRestyClient 创建 resty HTTP 客户端，测试时可替换为跳过 TLS 验证并指向 mock server 的版本
+var newRestyClient = func() *resty.Client { return resty.New() }
+
 type qweatherJWTHeader struct {
 	Alg string `json:"alg"`
 	Kid string `json:"kid"`
@@ -169,7 +172,7 @@ func cityLookup(name, adm, host string, cfg model.APIKeyConfig) (*model.Location
 	urlStr = "https://" + host + "/geo/v2/city/lookup?" + query.Encode()
 
 	// 使用 resty 发起请求
-	client := resty.New()
+	client := newRestyClient()
 	req, err := createQWeatherRequest(client, cfg)
 	if err != nil {
 		return nil, err
@@ -232,7 +235,7 @@ func weatherLookup(location, host string, cfg model.APIKeyConfig) (*model.Weathe
 	query.Set("location", location)
 	urlStr := "https://" + host + "/v7/weather/now?" + query.Encode()
 
-	client := resty.New()
+	client := newRestyClient()
 	req, err := createQWeatherRequest(client, cfg)
 	if err != nil {
 		return nil, err
@@ -275,7 +278,7 @@ func weatherLookupByName(name, adm, host string, cfg model.APIKeyConfig) (*model
 func weatherWarningLookup(lat, lon, host string, cfg model.APIKeyConfig) (*model.WarningResp, error) {
 	urlStr := fmt.Sprintf("https://%s/weatheralert/v1/current/%s/%s", host, url.PathEscape(lat), url.PathEscape(lon))
 
-	client := resty.New()
+	client := newRestyClient()
 	req, err := createQWeatherRequest(client, cfg)
 	if err != nil {
 		return nil, err
