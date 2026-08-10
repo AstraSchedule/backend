@@ -61,9 +61,7 @@ func TestGetStatistic_Success(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/statistic", GetStatistic)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/statistic", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/statistic", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -87,9 +85,7 @@ func TestGetStatistic_Auth(t *testing.T) {
 	router.GET("/web/statistic", middleware.JWTAuthMiddleware(), GetStatistic)
 
 	// 无 token -> 401
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/statistic", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/statistic", nil)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 
 	// 无效 token -> 401
@@ -119,9 +115,7 @@ func TestGetMenu_Empty(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/menu", GetMenu)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/menu", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/menu", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -145,9 +139,7 @@ func TestGetStructure_Empty(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/structure", GetStructure)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/structure", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/structure", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -164,9 +156,7 @@ func TestGetSubjectsOptions_Empty(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/config/:school/:grade/subjects/options", GetSubjectsOptions)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/config/school1/grade1/subjects/options", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/config/school1/grade1/subjects/options", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -177,9 +167,7 @@ func TestGetSubjects_Empty(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/config/:school/:grade/subjects", GetSubjects)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/config/school1/grade1/subjects", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/config/school1/grade1/subjects", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -190,9 +178,7 @@ func TestGetTimetableOptions_Success(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/config/:school/:grade/timetable/options", GetTimetableOptions)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/config/school1/grade1/timetable/options", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/config/school1/grade1/timetable/options", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -203,9 +189,7 @@ func TestGetTimetable_Empty(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/config/:school/:grade/timetable", GetTimetable)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/config/school1/grade1/timetable", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/config/school1/grade1/timetable", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -216,9 +200,7 @@ func TestGetScheduleConfig_Empty(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/config/:school/:grade/:class_number/schedule", GetScheduleConfig)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/config/school1/grade1/class1/schedule", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/config/school1/grade1/class1/schedule", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -229,9 +211,7 @@ func TestGetSettings_Empty(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/config/:school/:grade/:class_number/settings", GetSettings)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/config/school1/grade1/class1/settings", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/config/school1/grade1/class1/settings", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -244,9 +224,7 @@ func TestGetAutorunStatus_Success(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/autorun", GetAutorunStatus)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/autorun", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/autorun", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -279,9 +257,7 @@ func TestGetCountdownStatus_Success(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/countdown", GetCountdownStatus)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/countdown", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/countdown", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -294,9 +270,7 @@ func TestCompensationFromHoliday_Success(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/autorun/compensation/holiday/:year/:month/:day", CompensationFromHoliday)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/autorun/compensation/holiday/2025/10/01", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/autorun/compensation/holiday/2025/10/01", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -307,9 +281,7 @@ func TestCompensationFromWorkday_Success(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/autorun/compensation/workday/:year/:month/:day", CompensationFromWorkday)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/autorun/compensation/workday/2025/10/13", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/autorun/compensation/workday/2025/10/13", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -320,9 +292,7 @@ func TestCompensationFromYear_Success(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/autorun/compensation/year/:year", CompensationFromYear)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/autorun/compensation/year/2025", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/autorun/compensation/year/2025", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -353,9 +323,7 @@ func TestGetScheduleByDate_InvalidDate(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/schedule/by-date", GetScheduleByDate)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/schedule/by-date?scope=school1/grade1/class1&date=invalid", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/schedule/by-date?scope=school1/grade1/class1&date=invalid", nil)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -366,9 +334,7 @@ func TestGetScheduleByDate_InvalidScope(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/schedule/by-date", GetScheduleByDate)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/schedule/by-date?scope=school1&date=2025-10-13", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/schedule/by-date?scope=school1&date=2025-10-13", nil)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -766,9 +732,7 @@ func TestExportBackup_Success(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/backup/export", ExportBackup)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/backup/export", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/backup/export", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -803,9 +767,7 @@ func TestImportBackup_RoundTrip(t *testing.T) {
 	router.GET("/web/backup/export", ExportBackup)
 	router.POST("/web/backup/import", ImportBackup)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/web/backup/export", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "GET", "/web/backup/export", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// 回填导入
@@ -826,9 +788,7 @@ func TestFullExportBackup_Success(t *testing.T) {
 	router := setupTestRouter()
 	router.POST("/web/backup/full-export", FullExportBackup)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/web/backup/full-export", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "POST", "/web/backup/full-export", nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	var payload map[string]interface{}
@@ -842,9 +802,7 @@ func TestFullImportBackup_InvalidMode(t *testing.T) {
 	router := setupTestRouter()
 	router.POST("/web/backup/full-import", FullImportBackup)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/web/backup/full-import?mode=invalid", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "POST", "/web/backup/full-import?mode=invalid", nil)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -857,9 +815,7 @@ func TestFullImportBackup_RoundTrip(t *testing.T) {
 	router.POST("/web/backup/full-import", FullImportBackup)
 
 	// 先 full-export 拿备份内容
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/web/backup/full-export", nil)
-	router.ServeHTTP(w, req)
+	w := doRequest(router, "POST", "/web/backup/full-export", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// multipart 回填导入（skip 模式：仅 mode != overwrite 时响应携带 mode 字段）
