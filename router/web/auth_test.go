@@ -33,8 +33,9 @@ func setupTestUser(t *testing.T) *dbTable.User {
 	return user
 }
 
-// doRequest 在 router 上执行请求并返回 recorder
-func doRequest(router *gin.Engine, method, path string, body interface{}) *httptest.ResponseRecorder {
+// doRequestWithToken 执行带 Bearer JWT 的 JSON 请求，用于需认证的写接口测试。
+// token 为空时不发送 Authorization 头，适用于无需认证的读接口测试。
+func doRequestWithToken(router *gin.Engine, method, path string, body interface{}, token string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	var reqBody *bytes.Buffer
 	if body != nil {
@@ -45,8 +46,16 @@ func doRequest(router *gin.Engine, method, path string, body interface{}) *httpt
 	}
 	req, _ := http.NewRequest(method, path, reqBody)
 	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	router.ServeHTTP(w, req)
 	return w
+}
+
+// doRequest 在 router 上执行请求并返回 recorder（无需认证）
+func doRequest(router *gin.Engine, method, path string, body interface{}) *httptest.ResponseRecorder {
+	return doRequestWithToken(router, method, path, body, "")
 }
 
 // Login tests
