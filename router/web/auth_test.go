@@ -14,6 +14,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// setupTestEnv 组合 ensureTestDB + setupTestRouter，消除每个测试开头的重复样板
+func setupTestEnv(t *testing.T) *gin.Engine {
+	t.Helper()
+	ensureTestDB()
+	return setupTestRouter()
+}
+
 func setupTestUser(t *testing.T) *dbTable.User {
 	database := db.GetDB()
 	// Delete existing test user first
@@ -33,9 +40,7 @@ func setupTestUser(t *testing.T) *dbTable.User {
 // Login tests
 
 func TestLogin_InvalidJSON(t *testing.T) {
-	ensureTestDB()
-
-	router := setupTestRouter()
+	router := setupTestEnv(t)
 	router.POST("/web/auth/login", Login)
 
 	w := doRequest(router, "POST", "/web/auth/login", nil)
@@ -44,9 +49,7 @@ func TestLogin_InvalidJSON(t *testing.T) {
 }
 
 func TestLogin_UserNotFound(t *testing.T) {
-	ensureTestDB()
-
-	router := setupTestRouter()
+	router := setupTestEnv(t)
 	router.POST("/web/auth/login", Login)
 
 	body := map[string]string{"username": "nonexistent", "password": "test123"}
@@ -88,9 +91,7 @@ func TestLogin_Success(t *testing.T) {
 // GetMe tests
 
 func TestGetMe_NoAuth(t *testing.T) {
-	ensureTestDB()
-
-	router := setupTestRouter()
+	router := setupTestEnv(t)
 	router.GET("/web/auth/me", GetMe)
 
 	w := doRequest(router, "GET", "/web/auth/me", nil)
@@ -124,9 +125,7 @@ func TestGetMe_Success(t *testing.T) {
 // VerifyPassword tests
 
 func TestVerifyPassword_NoAuth(t *testing.T) {
-	ensureTestDB()
-
-	router := setupTestRouter()
+	router := setupTestEnv(t)
 	router.POST("/web/auth/verify-password", VerifyPassword)
 
 	w := doRequest(router, "POST", "/web/auth/verify-password", nil)
@@ -196,9 +195,7 @@ func TestVerifyPassword_Success(t *testing.T) {
 // ChangePassword tests
 
 func TestChangePassword_NoAuth(t *testing.T) {
-	ensureTestDB()
-
-	router := setupTestRouter()
+	router := setupTestEnv(t)
 	router.POST("/web/auth/change-password", ChangePassword)
 
 	w := doRequest(router, "POST", "/web/auth/change-password", nil)
@@ -288,9 +285,7 @@ func TestListUsers_Success(t *testing.T) {
 // CreateUser tests
 
 func TestCreateUser_InvalidJSON(t *testing.T) {
-	ensureTestDB()
-
-	router := setupTestRouter()
+	router := setupTestEnv(t)
 	router.POST("/web/users", CreateUser)
 
 	w := doRequest(router, "POST", "/web/users", nil)
@@ -299,9 +294,7 @@ func TestCreateUser_InvalidJSON(t *testing.T) {
 }
 
 func TestCreateUser_EmptyFields(t *testing.T) {
-	ensureTestDB()
-
-	router := setupTestRouter()
+	router := setupTestEnv(t)
 	router.POST("/web/users", CreateUser)
 
 	body := map[string]string{"username": "", "password": ""}
@@ -311,9 +304,7 @@ func TestCreateUser_EmptyFields(t *testing.T) {
 }
 
 func TestCreateUser_ShortPassword(t *testing.T) {
-	ensureTestDB()
-
-	router := setupTestRouter()
+	router := setupTestEnv(t)
 	router.POST("/web/users", CreateUser)
 
 	body := map[string]string{"username": "newuser", "password": "123"}
@@ -323,9 +314,7 @@ func TestCreateUser_ShortPassword(t *testing.T) {
 }
 
 func TestCreateUser_InvalidRole(t *testing.T) {
-	ensureTestDB()
-
-	router := setupTestRouter()
+	router := setupTestEnv(t)
 	router.POST("/web/users", CreateUser)
 
 	body := map[string]string{"username": "newuser", "password": "password123", "role": "invalid"}
@@ -335,9 +324,7 @@ func TestCreateUser_InvalidRole(t *testing.T) {
 }
 
 func TestCreateUser_Success(t *testing.T) {
-	ensureTestDB()
-
-	router := setupTestRouter()
+	router := setupTestEnv(t)
 	router.POST("/web/users", CreateUser)
 
 	body := map[string]string{"username": "newuser", "password": "password123", "role": "readonly"}
@@ -349,9 +336,7 @@ func TestCreateUser_Success(t *testing.T) {
 // UpdateUser tests
 
 func TestUpdateUser_InvalidID(t *testing.T) {
-	ensureTestDB()
-
-	router := setupTestRouter()
+	router := setupTestEnv(t)
 	router.PUT("/web/users/:id", UpdateUser)
 
 	w := doRequest(router, "PUT", "/web/users/invalid", nil)
@@ -360,9 +345,7 @@ func TestUpdateUser_InvalidID(t *testing.T) {
 }
 
 func TestUpdateUser_NotFound(t *testing.T) {
-	ensureTestDB()
-
-	router := setupTestRouter()
+	router := setupTestEnv(t)
 	router.PUT("/web/users/:id", UpdateUser)
 
 	body := map[string]string{"username": "updated"}
@@ -387,9 +370,7 @@ func TestUpdateUser_Success(t *testing.T) {
 // DeleteUser tests
 
 func TestDeleteUser_InvalidID(t *testing.T) {
-	ensureTestDB()
-
-	router := setupTestRouter()
+	router := setupTestEnv(t)
 	router.DELETE("/web/users/:id", DeleteUser)
 
 	w := doRequest(router, "DELETE", "/web/users/invalid", nil)
@@ -398,9 +379,7 @@ func TestDeleteUser_InvalidID(t *testing.T) {
 }
 
 func TestDeleteUser_NotFound(t *testing.T) {
-	ensureTestDB()
-
-	router := setupTestRouter()
+	router := setupTestEnv(t)
 	router.DELETE("/web/users/:id", DeleteUser)
 
 	w := doRequest(router, "DELETE", "/web/users/99999", nil)
