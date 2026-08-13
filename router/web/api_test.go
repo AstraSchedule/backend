@@ -351,10 +351,7 @@ func TestPutSubjects_InvalidJSON(t *testing.T) {
 	router := setupTestRouter()
 	router.PUT("/web/config/:school/:grade/subjects", PutSubjects)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("PUT", "/web/config/school1/grade1/subjects", bytes.NewBufferString("invalid"))
-	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, req)
+	w := doRawRequest(router, "PUT", "/web/config/school1/grade1/subjects", "invalid")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -380,10 +377,7 @@ func TestPutTimetable_InvalidJSON(t *testing.T) {
 	router := setupTestRouter()
 	router.PUT("/web/config/:school/:grade/timetable", PutTimetable)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("PUT", "/web/config/school1/grade1/timetable", bytes.NewBufferString("invalid"))
-	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, req)
+	w := doRawRequest(router, "PUT", "/web/config/school1/grade1/timetable", "invalid")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -428,10 +422,7 @@ func TestPutScheduleConfig_InvalidJSON(t *testing.T) {
 	router := setupTestRouter()
 	router.PUT("/web/config/:school/:grade/:class_number/schedule", PutScheduleConfig)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("PUT", "/web/config/school1/grade1/class1/schedule", bytes.NewBufferString("invalid"))
-	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, req)
+	w := doRawRequest(router, "PUT", "/web/config/school1/grade1/class1/schedule", "invalid")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -459,10 +450,7 @@ func TestPutSettings_InvalidJSON(t *testing.T) {
 	router := setupTestRouter()
 	router.PUT("/web/config/:school/:grade/:class_number/settings", PutSettings)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("PUT", "/web/config/school1/grade1/class1/settings", bytes.NewBufferString("invalid"))
-	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, req)
+	w := doRawRequest(router, "PUT", "/web/config/school1/grade1/class1/settings", "invalid")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -488,10 +476,7 @@ func TestCopyConfig_InvalidJSON(t *testing.T) {
 	router := setupTestRouter()
 	router.POST("/web/config/copy", CopyConfig)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/web/config/copy", bytes.NewBufferString("invalid"))
-	req.Header.Set("Content-Type", "application/json")
-	router.ServeHTTP(w, req)
+	w := doRawRequest(router, "POST", "/web/config/copy", "invalid")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

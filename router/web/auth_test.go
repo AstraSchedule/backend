@@ -43,7 +43,7 @@ func TestLogin_InvalidJSON(t *testing.T) {
 	router := setupTestEnv(t)
 	router.POST("/web/auth/login", Login)
 
-	w := doRequest(router, "POST", "/web/auth/login", nil)
+	w := doRawRequest(router, "POST", "/web/auth/login", "invalid")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -147,7 +147,7 @@ func TestVerifyPassword_InvalidJSON(t *testing.T) {
 		VerifyPassword(c)
 	})
 
-	w := doRequest(router, "POST", "/web/auth/verify-password", nil)
+	w := doRawRequest(router, "POST", "/web/auth/verify-password", "invalid")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -288,7 +288,7 @@ func TestCreateUser_InvalidJSON(t *testing.T) {
 	router := setupTestEnv(t)
 	router.POST("/web/users", CreateUser)
 
-	w := doRequest(router, "POST", "/web/users", nil)
+	w := doRawRequest(router, "POST", "/web/users", "invalid")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
