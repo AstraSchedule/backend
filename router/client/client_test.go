@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"AstraScheduleServerGo/db"
 	"AstraScheduleServerGo/model"
@@ -43,6 +44,19 @@ func setupTestRouter() *gin.Engine {
 	return router
 }
 
+// doClientRequest 在 router 上执行无请求体的请求并返回 recorder，消除重复样板。
+func doClientRequest(t *testing.T, router *gin.Engine, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest(method, path, nil)
+	if err != nil {
+		t.Fatalf("构造请求失败: %v", err)
+		return nil
+	}
+	router.ServeHTTP(w, req)
+	return w
+}
+
 // GetSchedule tests
 
 func TestGetSchedule_Empty(t *testing.T) {
@@ -57,13 +71,122 @@ func TestGetSchedule_Empty(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
+	// 契约：响应必须包含客户端消费的全部顶层字段（desktop/js/index.js 与 renderer.js 依赖）
 	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.NotNil(t, resp["daily_class"])
-	assert.NotNil(t, resp["startup_behavior"])
-	assert.NotNil(t, resp["timetable"])
-	assert.NotNil(t, resp["subject_name"])
-	assert.NotNil(t, resp["divider"])
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp, "supportWebSocket")
+	assert.Contains(t, resp, "version")
+	assert.Contains(t, resp, "daily_class")
+	assert.Contains(t, resp, "countdown_target")
+	assert.Contains(t, resp, "startup_behavior")
+	assert.Contains(t, resp, "banner_text")
+	assert.Contains(t, resp, "css_style")
+	assert.Contains(t, resp, "temperature_colors")
+	assert.Contains(t, resp, "timetable")
+	assert.Contains(t, resp, "divider")
+	assert.Contains(t, resp, "subject_name")
+	assert.Contains(t, resp, "countdown_records")
+
+	// daily_class 必须为 7 项的扁平化数组（desktop 按 index 取星期几）
+	dailyClass, ok := resp["daily_class"].([]interface{})
+	assert.True(t, ok, "daily_class 应为数组")
+	assert.Equal(t, 7, len(dailyClass))
+	for _, day := range dailyClass {
+		d, ok := day.(map[string]interface{})
+		assert.True(t, ok)
+		assert.Contains(t, d, "Chinese")
+		assert.Contains(t, d, "English")
+		assert.Contains(t, d, "classList")
+		assert.Contains(t, d, "timetable")
+	}
+
+	// 空数据时嵌套 map 应为空对象而非 null（客户端解构不崩溃）
+	assert.IsType(t, map[string]interface{}{}, resp["timetable"])
+	assert.IsType(t, map[string]interface{}{}, resp["divider"])
+	assert.IsType(t, map[string]interface{}{}, resp["subject_name"])
+	assert.IsType(t, []interface{}{}, resp["countdown_records"])
+}
+
+func TestGetSchedule_DataContract(t *testing.T) {
+	ensureTestDB()
+
+	database := db.GetDB()
+	// 使用独立 scope，避免与其它测试共享数据
+	database.Save(&dbTable.Schedule{
+		Namespace: "default",
+		School:    "contract", Grade: "2024", Class: "1",
+		DailyClasses: [7]dbTable.DailyClass{
+			{Timetable: "常日", ClassList: dbTable.ClassList{{"数", "代"}, {"语"}, {"英"}}},
+		},
+	})
+	database.Save(&dbTable.Subject{
+		Namespace: "default",
+		School:    "contract", Grade: "2024",
+		SubjectConfig: dbTable.SubjectConfig{SubjectName: map[string]string{"数": "数学", "语": "语文"}},
+	})
+	database.Save(&dbTable.Timetable{
+		Namespace: "default",
+		School:    "contract", Grade: "2024",
+		TimetableConfig: dbTable.TimetableConfig{
+			Timetable: map[string]map[string]interface{}{"常日": {"早上1": 1, "早上2": 2}},
+			Divider:   map[string][]int{"常日": {1}},
+		},
+	})
+	database.Save(&dbTable.CountdownRecord{
+		Namespace: "default",
+		ID:        "contract-cd", Scope: []string{"ALL"},
+		Schedules: []dbTable.CountdownScheduleItem{{Name: "期末", Date: "2026-01-01", Priority: 1}},
+	})
+
+	router := setupTestRouter()
+	router.GET("/:school/:grade/:class", GetSchedule)
+
+	w := doClientRequest(t, router, "GET", "/contract/2024/1")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	// 多周轮换：week 1 取第一个课程，扁平化 classList
+	dailyClass := resp["daily_class"].([]interface{})
+	day0 := dailyClass[0].(map[string]interface{})
+	assert.Equal(t, "常日", day0["timetable"])
+	assert.Equal(t, []interface{}{"数", "语", "英"}, day0["classList"])
+
+	// subject_name / timetable / divider 映射
+	assert.Equal(t, "数学", resp["subject_name"].(map[string]interface{})["数"])
+	assert.Contains(t, resp["timetable"].(map[string]interface{}), "常日")
+	assert.Equal(t, []interface{}{float64(1)}, resp["divider"].(map[string]interface{})["常日"])
+
+	// 倒数日按 scope 过滤后返回
+	countdowns := resp["countdown_records"].([]interface{})
+	assert.Equal(t, 1, len(countdowns))
+}
+
+func TestGetSchedule_NotModified(t *testing.T) {
+	ensureTestDB()
+
+	database := db.GetDB()
+	database.Save(&dbTable.DataVersion{
+		Namespace: "default",
+		School:    "nms", Grade: "2024", Class: "1",
+		Version: time.Now(),
+	})
+
+	router := setupTestRouter()
+	router.GET("/:school/:grade/:class", GetSchedule)
+
+	// 不带 version -> 200
+	w := doClientRequest(t, router, "GET", "/nms/2024/1")
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 带与服务器一致的 version -> 304（desktop 依赖增量同步）
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	v := resp["version"].(string)
+
+	w2 := doClientRequest(t, router, "GET", "/nms/2024/1?version="+v)
+	assert.Equal(t, http.StatusNotModified, w2.Code)
 }
 
 func TestGetSchedule_WithVersion(t *testing.T) {
@@ -160,7 +283,7 @@ func TestGetWeatherWithProvince_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp model.WeatherResponse
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "北京", resp.Where)
 	assert.Equal(t, "25", resp.Temp)
 	assert.Equal(t, "晴", resp.Weat)
@@ -183,7 +306,7 @@ func TestGetWeatherWithCity_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp model.WeatherResponse
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "北京", resp.Where)
 	assert.Equal(t, "25", resp.Temp)
 }
@@ -221,7 +344,7 @@ func TestGetWeatherWithCFHeader_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp model.WeatherResponse
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "北京", resp.Where)
 	assert.Equal(t, "25", resp.Temp)
 }
@@ -238,8 +361,8 @@ func TestWebSocketPlaceholder(t *testing.T) {
 	req, _ := http.NewRequest("GET", "/ws/school1/grade1/class1", nil)
 	router.ServeHTTP(w, req)
 
-	// WebSocket upgrade fails in test server; any response means handler didn't panic
-	assert.True(t, w.Code >= 200, "handler should not return error codes for WS placeholder")
+	// WebSocket upgrade will fail in test, but handler should not panic
+	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusUpgradeRequired || w.Code == http.StatusBadRequest)
 }
 
 // BroadcastSyncConfig tests
@@ -254,6 +377,6 @@ func TestBroadcastSyncConfig_NoAuth(t *testing.T) {
 	req, _ := http.NewRequest("POST", "/api/broadcast/school1/grade1/class1", nil)
 	router.ServeHTTP(w, req)
 
-	// BroadcastSyncConfig returns 200 on empty broadcast or 400/500 depending on scope validation
-	assert.NotEqual(t, http.StatusNotFound, w.Code, "route should be registered")
+	// Without auth, should fail or succeed depending on middleware
+	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusUnauthorized)
 }
