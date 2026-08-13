@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // setupTestEnv 组合 ensureTestDB + setupTestRouter，消除每个测试开头的重复样板
@@ -83,9 +84,16 @@ func TestLogin_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
+	// 契约：登录响应含 token/must_change_pwd/user{id,username,role,scope}（usr-dashboard Login.vue 依赖）
 	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.NotEmpty(t, resp["token"])
+	assert.Contains(t, resp, "must_change_pwd")
+	user, ok := resp["user"].(map[string]interface{})
+	require.True(t, ok, "响应应包含 user 对象")
+	assert.Equal(t, "testuser", user["username"])
+	assert.Equal(t, "admin", user["role"])
+	assert.Contains(t, user, "scope")
 }
 
 // GetMe tests
@@ -276,10 +284,26 @@ func TestListUsers_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
+	// 契约：每项含 id/username/role/scope/must_change_pwd/must_change_username（usr-dashboard Users.vue 依赖）
 	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	data := resp["data"].([]interface{})
 	assert.GreaterOrEqual(t, len(data), 1)
+	found := false
+	for _, item := range data {
+		u, ok := item.(map[string]interface{})
+		require.True(t, ok, "用户列表项应为对象")
+		if u["username"] == "testuser" {
+			found = true
+			assert.Equal(t, "admin", u["role"])
+			assert.Contains(t, u, "id")
+			assert.Contains(t, u, "scope")
+			assert.Contains(t, u, "must_change_pwd")
+			assert.Contains(t, u, "must_change_username")
+			assert.Contains(t, u, "created_at")
+		}
+	}
+	assert.True(t, found, "testuser 应出现在用户列表")
 }
 
 // CreateUser tests

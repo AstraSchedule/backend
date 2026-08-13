@@ -44,6 +44,19 @@ func setupTestRouter() *gin.Engine {
 	return router
 }
 
+// doClientRequest 在 router 上执行无请求体的请求并返回 recorder，消除重复样板。
+func doClientRequest(t *testing.T, router *gin.Engine, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest(method, path, nil)
+	if err != nil {
+		t.Fatalf("构造请求失败: %v", err)
+		return nil
+	}
+	router.ServeHTTP(w, req)
+	return w
+}
+
 // GetSchedule tests
 
 func TestGetSchedule_Empty(t *testing.T) {
@@ -124,9 +137,7 @@ func TestGetSchedule_DataContract(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/:school/:grade/:class", GetSchedule)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/contract/2024/1", nil)
-	router.ServeHTTP(w, req)
+	w := doClientRequest(t, router, "GET", "/contract/2024/1")
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]interface{}
@@ -161,9 +172,7 @@ func TestGetSchedule_NotModified(t *testing.T) {
 	router.GET("/:school/:grade/:class", GetSchedule)
 
 	// 不带 version -> 200
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/nms/2024/1", nil)
-	router.ServeHTTP(w, req)
+	w := doClientRequest(t, router, "GET", "/nms/2024/1")
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// 带与服务器一致的 version -> 304（desktop 依赖增量同步）
@@ -171,9 +180,7 @@ func TestGetSchedule_NotModified(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	v := resp["version"].(string)
 
-	w2 := httptest.NewRecorder()
-	req2, _ := http.NewRequest("GET", "/nms/2024/1?version="+v, nil)
-	router.ServeHTTP(w2, req2)
+	w2 := doClientRequest(t, router, "GET", "/nms/2024/1?version="+v)
 	assert.Equal(t, http.StatusNotModified, w2.Code)
 }
 
@@ -265,9 +272,7 @@ func TestGetWeatherWithProvince_Success(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/api/weather/:name1/:name2", GetWeatherWithProvince)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/weather/北京/朝阳", nil)
-	router.ServeHTTP(w, req)
+	w := doClientRequest(t, router, "GET", "/api/weather/北京/朝阳")
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp model.WeatherResponse
@@ -288,9 +293,7 @@ func TestGetWeatherWithCity_Success(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/api/weather/:name1", GetWeatherWithCity)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/weather/北京", nil)
-	router.ServeHTTP(w, req)
+	w := doClientRequest(t, router, "GET", "/api/weather/北京")
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp model.WeatherResponse
@@ -305,12 +308,31 @@ func TestGetWeatherWithCFHeader_NoCFHeader(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/api/weather/", GetWeatherWithCFHeader)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/api/weather/", nil)
-	router.ServeHTTP(w, req)
+	w := doClientRequest(t, router, "GET", "/api/weather/")
 
 	// 没有 CF-IPCity 头时应返回 400
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestGetWeatherWithCFHeader_NoCredential(t *testing.T) {
+	ensureTestDB()
+
+	// 未配置天气认证时返回 403（不发起上游请求，也不计入统计）
+	origAPIKey := model.Configs.APIKey
+	model.Configs.APIKey = model.APIKeyConfig{}
+	t.Cleanup(func() { model.Configs.APIKey = origAPIKey })
+
+	router := setupTestRouter()
+	router.GET("/api/weather/", GetWeatherWithCFHeader)
+
+	// 使用未被其它测试缓存的城市，避免命中城市查询缓存走重试路径
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/weather/", nil)
+	req.Header.Set("CF-IPCity", "上海")
+	req.Header.Set("CF-Region", "上海")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestGetWeatherWithCFHeader_Success(t *testing.T) {
@@ -345,26 +367,42 @@ func TestWebSocketPlaceholder(t *testing.T) {
 	router := setupTestRouter()
 	router.Any("/ws/:school/:grade/:class_number", WebSocketPlaceholder)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/ws/school1/grade1/class1", nil)
-	router.ServeHTTP(w, req)
+	// 契约：普通 HTTP 请求（无 Upgrade 头）必须返回 400
+	w := doClientRequest(t, router, "GET", "/ws/school1/grade1/class1")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
 
-	// WebSocket upgrade will fail in test, but handler should not panic
-	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusUpgradeRequired || w.Code == http.StatusBadRequest)
+func TestWebSocketPlaceholder_Serverless(t *testing.T) {
+	ensureTestDB()
+
+	// serverless 模式下 WebSocket 必须被禁用（返回 501）
+	origServerless := model.Configs.Run.Serverless
+	model.Configs.Run.Serverless = true
+	t.Cleanup(func() { model.Configs.Run.Serverless = origServerless })
+
+	router := setupTestRouter()
+	router.Any("/ws/:school/:grade/:class_number", WebSocketPlaceholder)
+
+	w := doClientRequest(t, router, "GET", "/ws/school1/grade1/class1")
+	assert.Equal(t, http.StatusNotImplemented, w.Code)
 }
 
 // BroadcastSyncConfig tests
 
-func TestBroadcastSyncConfig_NoAuth(t *testing.T) {
+func TestBroadcastSyncConfig_Success(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
 	router.POST("/api/broadcast/:school/:grade/:class_number", BroadcastSyncConfig)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/api/broadcast/school1/grade1/class1", nil)
-	router.ServeHTTP(w, req)
+	w := doClientRequest(t, router, "POST", "/api/broadcast/school1/grade1/class1")
 
-	// Without auth, should fail or succeed depending on middleware
-	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusUnauthorized)
+	// 契约：无在线连接时仍返回 200 与 SyncConfig 消息（认证由路由层 AdminOrToken 保证，main_test.go 覆盖）
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "SyncConfig", resp["message"])
+	assert.Equal(t, float64(200), resp["status"])
+	assert.Contains(t, resp, "sent")
+	assert.Contains(t, resp, "websocket_enabled")
 }

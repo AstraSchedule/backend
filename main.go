@@ -21,6 +21,18 @@ func main() {
 
 	logrus.Infof("程序初始化流程结束，即将启动 HTTP 服务：%+v", model.Configs)
 
+	router := buildRouter()
+
+	err := router.Run(fmt.Sprintf("%s:%d", model.Configs.Server.Host, model.Configs.Server.Port))
+	if err != nil {
+		logrus.Fatal(err.Error())
+		return
+	}
+}
+
+// buildRouter 组装完整的路由与中间件链，供 main 启动与契约回归测试共用。
+// 任何对路由表、路径或认证中间件的误改都应由 main_test.go 的契约测试捕获。
+func buildRouter() *gin.Engine {
 	router := gin.Default()
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:     model.Configs.Server.Domain,
@@ -135,9 +147,5 @@ func main() {
 	// Admin: DROP table (仅内部调用，需 BasicAuth + password 验证)
 	secureWrite.DELETE("/web/admin/drop-table/:table", web.DropAstraTable)
 
-	err := router.Run(fmt.Sprintf("%s:%d", model.Configs.Server.Host, model.Configs.Server.Port))
-	if err != nil {
-		logrus.Fatal(err.Error())
-		return
-	}
+	return router
 }
