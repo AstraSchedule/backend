@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // setupTestEnv 组合 ensureTestDB + setupTestRouter，消除每个测试开头的重复样板
@@ -88,7 +89,8 @@ func TestLogin_Success(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.NotEmpty(t, resp["token"])
 	assert.Contains(t, resp, "must_change_pwd")
-	user := resp["user"].(map[string]interface{})
+	user, ok := resp["user"].(map[string]interface{})
+	require.True(t, ok, "响应应包含 user 对象")
 	assert.Equal(t, "testuser", user["username"])
 	assert.Equal(t, "admin", user["role"])
 	assert.Contains(t, user, "scope")
@@ -289,7 +291,8 @@ func TestListUsers_Success(t *testing.T) {
 	assert.GreaterOrEqual(t, len(data), 1)
 	found := false
 	for _, item := range data {
-		u := item.(map[string]interface{})
+		u, ok := item.(map[string]interface{})
+		require.True(t, ok, "用户列表项应为对象")
 		if u["username"] == "testuser" {
 			found = true
 			assert.Equal(t, "admin", u["role"])

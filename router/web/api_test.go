@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setupTestRouter() *gin.Engine {
@@ -138,11 +139,13 @@ func TestGetMenu_Contract(t *testing.T) {
 		if m["text"] == "menu-school 学校" {
 			children := m["children"].([]interface{})
 			assert.NotEmpty(t, children, "学校节点应包含年级")
-			grade := children[0].(map[string]interface{})
+			grade, ok := children[0].(map[string]interface{})
+			require.True(t, ok, "年级节点应为对象")
 			assert.Contains(t, grade, "raw")
 			gradeChildren := grade["children"].([]interface{})
 			assert.NotEmpty(t, gradeChildren, "年级节点应包含班级")
-			classNode := gradeChildren[len(gradeChildren)-1].(map[string]interface{})
+			classNode, ok := gradeChildren[len(gradeChildren)-1].(map[string]interface{})
+			require.True(t, ok, "班级节点应为对象")
 			assert.Contains(t, classNode, "raw")
 		}
 	}
@@ -192,7 +195,8 @@ func TestGetSubjectsOptions_Contract(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	options := resp["options"].([]interface{})
 	assert.Len(t, options, 1)
-	opt := options[0].(map[string]interface{})
+	opt, ok := options[0].(map[string]interface{})
+	require.True(t, ok, "options 项应为对象")
 	assert.Contains(t, opt, "label")
 	assert.Contains(t, opt, "value")
 	assert.Equal(t, "数", opt["value"])
@@ -234,7 +238,8 @@ func TestGetTimetableOptions_Contract(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	options := resp["options"].([]interface{})
 	assert.Len(t, options, 1)
-	opt := options[0].(map[string]interface{})
+	opt, ok := options[0].(map[string]interface{})
+	require.True(t, ok, "options 项应为对象")
 	assert.Equal(t, "常日", opt["label"])
 	assert.Equal(t, "常日", opt["value"])
 	assert.Equal(t, float64(1), opt["need"])
@@ -270,7 +275,8 @@ func TestGetScheduleConfig_Contract(t *testing.T) {
 	assert.True(t, ok, "daily_class 应为数组")
 	assert.Equal(t, 7, len(daily))
 	for _, d := range daily {
-		day := d.(map[string]interface{})
+		day, ok := d.(map[string]interface{})
+		require.True(t, ok, "daily_class 项应为对象")
 		assert.Contains(t, day, "Chinese")
 		assert.Contains(t, day, "English")
 		assert.Contains(t, day, "classList")
@@ -317,13 +323,15 @@ func TestGetAutorunStatus_Contract(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	data := resp["data"].([]interface{})
 	assert.NotEmpty(t, data)
-	item := data[0].(map[string]interface{})
+	item, ok := data[0].(map[string]interface{})
+	require.True(t, ok, "列表项应为对象")
 	assert.Equal(t, "contract-hash", item["id"])
 	assert.Equal(t, "COMPENSATION", item["type"])
 	assert.Contains(t, item, "priority")
 	assert.Contains(t, item, "status")
 	assert.Contains(t, item, "scope")
-	content := item["content"].(map[string]interface{})
+	content, ok := item["content"].(map[string]interface{})
+	require.True(t, ok, "content 应为对象")
 	assert.Equal(t, "2025-10-01", content["date"])
 }
 
@@ -358,7 +366,7 @@ func TestGetCountdownStatus_Contract(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/countdown", GetCountdownStatus)
 
-	// 契约：loading/hasConfig/data 三键 + 记录形状
+	// 契约：loading/hasConfig/data 三键 + 记录形状（按 id 查找，不依赖返回顺序）
 	w := doRequest(t, router, "GET", "/web/countdown", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]interface{}
@@ -367,11 +375,18 @@ func TestGetCountdownStatus_Contract(t *testing.T) {
 	assert.Equal(t, true, resp["hasConfig"])
 	data := resp["data"].([]interface{})
 	assert.Len(t, data, 2)
-	item := data[0].(map[string]interface{})
-	assert.Contains(t, item, "id")
+	var item map[string]interface{}
+	for _, raw := range data {
+		m, ok := raw.(map[string]interface{})
+		if ok && m["id"] == "cd-contract" {
+			item = m
+		}
+	}
+	require.NotNil(t, item, "cd-contract 应出现在列表")
 	assert.Contains(t, item, "scope")
 	schedules := item["schedules"].([]interface{})
-	first := schedules[0].(map[string]interface{})
+	first, ok := schedules[0].(map[string]interface{})
+	require.True(t, ok, "schedules 项应为对象")
 	assert.Equal(t, "期末", first["name"])
 
 	// 契约：?scope= 过滤（usr-dashboard listCountdown 带 scope 查询）
@@ -380,7 +395,9 @@ func TestGetCountdownStatus_Contract(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	data = resp["data"].([]interface{})
 	assert.Len(t, data, 1)
-	assert.Equal(t, "cd-contract", data[0].(map[string]interface{})["id"])
+	only, ok := data[0].(map[string]interface{})
+	require.True(t, ok, "过滤结果应为对象")
+	assert.Equal(t, "cd-contract", only["id"])
 }
 
 func TestGetCountdownByID_NotFound(t *testing.T) {
@@ -452,7 +469,8 @@ func TestCompensationFromYear_Success(t *testing.T) {
 	assert.Equal(t, float64(2025), resp["year"])
 	pairs := resp["pairs"].([]interface{})
 	assert.NotEmpty(t, pairs, "2025 年应存在调休对")
-	first := pairs[0].(map[string]interface{})
+	first, ok := pairs[0].(map[string]interface{})
+	require.True(t, ok, "pairs 项应为对象")
 	assert.Contains(t, first, "holiday")
 	assert.Contains(t, first, "workday")
 
@@ -495,10 +513,12 @@ func TestGetScheduleByDate_Success(t *testing.T) {
 	periods, ok := data["periods"].([]interface{})
 	assert.True(t, ok, "data 应包含 periods 数组")
 	assert.Len(t, periods, 2)
-	p0 := periods[0].(map[string]interface{})
+	p0, ok := periods[0].(map[string]interface{})
+	require.True(t, ok, "periods 项应为对象")
 	assert.Equal(t, float64(1), p0["no"])
 	assert.Equal(t, "数", p0["subject"])
-	p1 := periods[1].(map[string]interface{})
+	p1, ok := periods[1].(map[string]interface{})
+	require.True(t, ok, "periods 项应为对象")
 	assert.Equal(t, "语", p1["subject"])
 }
 
@@ -562,7 +582,11 @@ func TestPutSubjects_Success(t *testing.T) {
 	assert.Len(t, options, 2)
 	values := map[string]bool{}
 	for _, o := range options {
-		values[o.(map[string]interface{})["value"].(string)] = true
+		opt, ok := o.(map[string]interface{})
+		require.True(t, ok, "options 项应为对象")
+		value, ok := opt["value"].(string)
+		require.True(t, ok, "options 项应含 value")
+		values[value] = true
 	}
 	assert.True(t, values["数"])
 	assert.True(t, values["语"])
@@ -601,10 +625,12 @@ func TestPutTimetable_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]interface{}
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	timetable := resp["timetable"].(map[string]interface{})
+	timetable, ok := resp["timetable"].(map[string]interface{})
+	require.True(t, ok, "timetable 应为对象")
 	assert.Contains(t, timetable, "常日")
 	assert.Contains(t, timetable, "考试")
-	divider := resp["divider"].(map[string]interface{})
+	divider, ok := resp["divider"].(map[string]interface{})
+	require.True(t, ok, "divider 应为对象")
 	assert.Contains(t, divider, "常日", "divider 键应与 timetable 同步")
 	assert.Contains(t, divider, "考试")
 }
@@ -651,6 +677,11 @@ func TestPutScheduleConfig_MissingDailyClass(t *testing.T) {
 	w = doRequest(t, router, "PUT", "/web/config/school1/grade1/class1/schedule",
 		map[string]interface{}{"daily_class": []interface{}{map[string]interface{}{"Chinese": "一"}}})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// 7 项但存在非对象条目也必须 400，防止对应日期被写入零值课表
+	w = doRequest(t, router, "PUT", "/web/config/school1/grade1/class1/schedule",
+		map[string]interface{}{"daily_class": []interface{}{nil, "bad", 1, 2.5, true, []interface{}{}, map[string]interface{}{}}})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestPutScheduleConfig_Success(t *testing.T) {
@@ -685,10 +716,14 @@ func TestPutScheduleConfig_Success(t *testing.T) {
 	daily, ok := resp["daily_class"].([]interface{})
 	assert.True(t, ok, "daily_class 应为数组")
 	assert.Equal(t, 7, len(daily))
-	day0 := daily[0].(map[string]interface{})
+	day0, ok := daily[0].(map[string]interface{})
+	require.True(t, ok, "daily_class 项应为对象")
 	assert.Equal(t, "日", day0["Chinese"])
-	classList := day0["classList"].([]interface{})
-	assert.Equal(t, []interface{}{"数"}, classList[0].([]interface{}))
+	classList, ok := day0["classList"].([]interface{})
+	require.True(t, ok, "classList 应为数组")
+	slot, ok := classList[0].([]interface{})
+	require.True(t, ok, "classList 项应为嵌套数组")
+	assert.Equal(t, []interface{}{"数"}, slot)
 }
 
 func TestPutSettings_InvalidJSON(t *testing.T) {
@@ -836,11 +871,13 @@ func TestPutCompensationRule_Success(t *testing.T) {
 	data := resp["data"].([]interface{})
 	found := false
 	for _, item := range data {
-		m := item.(map[string]interface{})
+		m, ok := item.(map[string]interface{})
+		require.True(t, ok, "列表项应为对象")
 		if m["id"] == hashID {
 			found = true
 			assert.Equal(t, "COMPENSATION", m["type"])
-			content := m["content"].(map[string]interface{})
+			content, ok := m["content"].(map[string]interface{})
+			require.True(t, ok, "content 应为对象")
 			assert.Equal(t, "2025-10-01", content["date"])
 			assert.Equal(t, "2025-09-29", content["useDate"])
 		}
@@ -987,12 +1024,15 @@ func TestPutCountdownRule_Success(t *testing.T) {
 	data := resp["data"].([]interface{})
 	found := false
 	for _, item := range data {
-		m := item.(map[string]interface{})
+		m, ok := item.(map[string]interface{})
+		require.True(t, ok, "列表项应为对象")
 		if m["id"] == id {
 			found = true
 			schedules := m["schedules"].([]interface{})
 			assert.Len(t, schedules, 1)
-			assert.Equal(t, "期末考试", schedules[0].(map[string]interface{})["name"])
+			s, ok := schedules[0].(map[string]interface{})
+			require.True(t, ok, "schedules 项应为对象")
+			assert.Equal(t, "期末考试", s["name"])
 		}
 	}
 	assert.True(t, found, "写入的倒数日应出现在列表")
