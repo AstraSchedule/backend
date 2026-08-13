@@ -6,6 +6,7 @@ import (
 	"AstraScheduleServerGo/router/client"
 	"AstraScheduleServerGo/service"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 
@@ -447,10 +448,12 @@ func PutScheduleConfig(c *gin.Context) {
 		return
 	}
 	body := schedulePayload{}
-	for _, one := range dailyClassRaw {
+	for index, one := range dailyClassRaw {
 		obj, ok := one.(map[string]interface{})
 		if !ok {
-			continue
+			// 契约校验：非对象条目会导致对应日期写入零值课表（部分清空），必须拒绝
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("daily_class[%d] 必须为对象", index)})
+			return
 		}
 		item := dailyClassInput{}
 		item.Chinese, _ = obj["Chinese"].(string)
