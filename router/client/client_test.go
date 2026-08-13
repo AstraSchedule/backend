@@ -44,6 +44,19 @@ func setupTestRouter() *gin.Engine {
 	return router
 }
 
+// doClientRequest 在 router 上执行无请求体的请求并返回 recorder，消除重复样板。
+func doClientRequest(t *testing.T, router *gin.Engine, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest(method, path, nil)
+	if err != nil {
+		t.Fatalf("构造请求失败: %v", err)
+		return nil
+	}
+	router.ServeHTTP(w, req)
+	return w
+}
+
 // GetSchedule tests
 
 func TestGetSchedule_Empty(t *testing.T) {
@@ -128,9 +141,7 @@ func TestGetSchedule_DataContract(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/:school/:grade/:class", GetSchedule)
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/contract/2024/1", nil)
-	router.ServeHTTP(w, req)
+	w := doClientRequest(t, router, "GET", "/contract/2024/1")
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]interface{}
@@ -166,9 +177,7 @@ func TestGetSchedule_NotModified(t *testing.T) {
 	router.GET("/:school/:grade/:class", GetSchedule)
 
 	// 不带 version -> 200
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/nms/2024/1", nil)
-	router.ServeHTTP(w, req)
+	w := doClientRequest(t, router, "GET", "/nms/2024/1")
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// 带与服务器一致的 version -> 304（desktop 依赖增量同步）
@@ -176,9 +185,7 @@ func TestGetSchedule_NotModified(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	v := resp["version"].(string)
 
-	w2 := httptest.NewRecorder()
-	req2, _ := http.NewRequest("GET", "/nms/2024/1?version="+v, nil)
-	router.ServeHTTP(w2, req2)
+	w2 := doClientRequest(t, router, "GET", "/nms/2024/1?version="+v)
 	assert.Equal(t, http.StatusNotModified, w2.Code)
 }
 

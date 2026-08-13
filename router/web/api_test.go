@@ -35,6 +35,16 @@ func newAdminToken(t *testing.T) string {
 	return token
 }
 
+// authedWriteRouter 生成 admin token 并注册带 JWT 认证的写接口路由，消除重复样板。
+// saas 版写接口 handler 内部校验 claims，必须挂 JWTAuthMiddleware 并携带 token。
+func authedWriteRouter(t *testing.T, method, path string, handler gin.HandlerFunc) (*gin.Engine, string) {
+	t.Helper()
+	token := newAdminToken(t)
+	router := setupTestRouter()
+	router.Handle(method, path, middleware.JWTAuthMiddleware(), handler)
+	return router, token
+}
+
 func ensureTestDB() {
 	if testDBInitialized {
 		return
@@ -527,9 +537,7 @@ func TestCopyConfig_Success(t *testing.T) {
 func TestPutCompensationRule_InvalidDate(t *testing.T) {
 	ensureTestDB()
 
-	token := newAdminToken(t)
-	router := setupTestRouter()
-	router.PUT("/web/autorun/compensation", middleware.JWTAuthMiddleware(), PutCompensationRule)
+	router, token := authedWriteRouter(t, "PUT", "/web/autorun/compensation", PutCompensationRule)
 
 	body := map[string]interface{}{
 		"type": 0, "scope": []string{"ALL"}, "priority": 1,
@@ -543,9 +551,7 @@ func TestPutCompensationRule_InvalidDate(t *testing.T) {
 func TestPutCompensationRule_Success(t *testing.T) {
 	ensureTestDB()
 
-	token := newAdminToken(t)
-	router := setupTestRouter()
-	router.PUT("/web/autorun/compensation", middleware.JWTAuthMiddleware(), PutCompensationRule)
+	router, token := authedWriteRouter(t, "PUT", "/web/autorun/compensation", PutCompensationRule)
 
 	body := map[string]interface{}{
 		"type": 0, "scope": []string{"ALL"}, "priority": 1,
@@ -559,9 +565,7 @@ func TestPutCompensationRule_Success(t *testing.T) {
 func TestPutTimetableRule_Success(t *testing.T) {
 	ensureTestDB()
 
-	token := newAdminToken(t)
-	router := setupTestRouter()
-	router.PUT("/web/autorun/timetable", middleware.JWTAuthMiddleware(), PutTimetableRule)
+	router, token := authedWriteRouter(t, "PUT", "/web/autorun/timetable", PutTimetableRule)
 
 	body := map[string]interface{}{
 		"type": 1, "scope": []string{"ALL"}, "priority": 1,
@@ -575,9 +579,7 @@ func TestPutTimetableRule_Success(t *testing.T) {
 func TestPutScheduleRule_MissingPeriods(t *testing.T) {
 	ensureTestDB()
 
-	token := newAdminToken(t)
-	router := setupTestRouter()
-	router.PUT("/web/autorun/schedule", middleware.JWTAuthMiddleware(), PutScheduleRule)
+	router, token := authedWriteRouter(t, "PUT", "/web/autorun/schedule", PutScheduleRule)
 
 	body := map[string]interface{}{
 		"type": 2, "scope": []string{"ALL"}, "priority": 1,
@@ -591,9 +593,7 @@ func TestPutScheduleRule_MissingPeriods(t *testing.T) {
 func TestPutScheduleRule_Success(t *testing.T) {
 	ensureTestDB()
 
-	token := newAdminToken(t)
-	router := setupTestRouter()
-	router.PUT("/web/autorun/schedule", middleware.JWTAuthMiddleware(), PutScheduleRule)
+	router, token := authedWriteRouter(t, "PUT", "/web/autorun/schedule", PutScheduleRule)
 
 	body := map[string]interface{}{
 		"type": 2, "scope": []string{"ALL"}, "priority": 1,
@@ -610,9 +610,7 @@ func TestPutScheduleRule_Success(t *testing.T) {
 func TestPutAllRule_Success(t *testing.T) {
 	ensureTestDB()
 
-	token := newAdminToken(t)
-	router := setupTestRouter()
-	router.PUT("/web/autorun/all", middleware.JWTAuthMiddleware(), PutAllRule)
+	router, token := authedWriteRouter(t, "PUT", "/web/autorun/all", PutAllRule)
 
 	body := map[string]interface{}{
 		"type": 3, "scope": []string{"ALL"}, "priority": 1,
@@ -630,9 +628,7 @@ func TestPutAllRule_Success(t *testing.T) {
 func TestDeleteAutorunRecord_NotFound(t *testing.T) {
 	ensureTestDB()
 
-	token := newAdminToken(t)
-	router := setupTestRouter()
-	router.DELETE("/web/autorun/:hashid", middleware.JWTAuthMiddleware(), DeleteAutorunRecord)
+	router, token := authedWriteRouter(t, "DELETE", "/web/autorun/:hashid", DeleteAutorunRecord)
 
 	w := doRequestWithToken(t, router, "DELETE", "/web/autorun/nonexistent-hash", nil, token)
 
@@ -642,10 +638,8 @@ func TestDeleteAutorunRecord_NotFound(t *testing.T) {
 func TestDeleteAutorunRecord_Success(t *testing.T) {
 	ensureTestDB()
 
-	token := newAdminToken(t)
 	// 先创建一条规则
-	router := setupTestRouter()
-	router.PUT("/web/autorun/compensation", middleware.JWTAuthMiddleware(), PutCompensationRule)
+	router, token := authedWriteRouter(t, "PUT", "/web/autorun/compensation", PutCompensationRule)
 
 	body := map[string]interface{}{
 		"type": 0, "scope": []string{"ALL"}, "priority": 1,
@@ -660,7 +654,7 @@ func TestDeleteAutorunRecord_Success(t *testing.T) {
 	assert.NotEmpty(t, hashID)
 
 	// 再删除
-	router.DELETE("/web/autorun/:hashid", middleware.JWTAuthMiddleware(), DeleteAutorunRecord)
+	router.Handle("DELETE", "/web/autorun/:hashid", middleware.JWTAuthMiddleware(), DeleteAutorunRecord)
 	w2 := doRequestWithToken(t, router, "DELETE", "/web/autorun/"+hashID, nil, token)
 	assert.Equal(t, http.StatusOK, w2.Code)
 }
@@ -670,9 +664,7 @@ func TestDeleteAutorunRecord_Success(t *testing.T) {
 func TestPutCountdownRule_Success(t *testing.T) {
 	ensureTestDB()
 
-	token := newAdminToken(t)
-	router := setupTestRouter()
-	router.PUT("/web/countdown", middleware.JWTAuthMiddleware(), PutCountdownRule)
+	router, token := authedWriteRouter(t, "PUT", "/web/countdown", PutCountdownRule)
 
 	body := map[string]interface{}{
 		"scope": []string{"ALL"},
@@ -688,9 +680,7 @@ func TestPutCountdownRule_Success(t *testing.T) {
 func TestDeleteCountdownRecord_NotFound(t *testing.T) {
 	ensureTestDB()
 
-	token := newAdminToken(t)
-	router := setupTestRouter()
-	router.DELETE("/web/countdown/:id", middleware.JWTAuthMiddleware(), DeleteCountdownRecord)
+	router, token := authedWriteRouter(t, "DELETE", "/web/countdown/:id", DeleteCountdownRecord)
 
 	w := doRequestWithToken(t, router, "DELETE", "/web/countdown/nonexistent-id", nil, token)
 
