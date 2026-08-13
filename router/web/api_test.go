@@ -351,7 +351,7 @@ func TestPutSubjects_InvalidJSON(t *testing.T) {
 	router := setupTestRouter()
 	router.PUT("/web/config/:school/:grade/subjects", PutSubjects)
 
-	w := doRawRequest(router, "PUT", "/web/config/school1/grade1/subjects", "invalid")
+	w := doRawRequest(t, router, "PUT", "/web/config/school1/grade1/subjects", "invalid")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -366,7 +366,7 @@ func TestPutSubjects_Success(t *testing.T) {
 		"abbr":     []map[string]interface{}{{"text": "数"}},
 		"fullName": []map[string]interface{}{{"text": "数学"}},
 	}
-	w := doRequest(router, "PUT", "/web/config/school1/grade1/subjects", body)
+	w := doRequest(t, router, "PUT", "/web/config/school1/grade1/subjects", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -377,7 +377,7 @@ func TestPutTimetable_InvalidJSON(t *testing.T) {
 	router := setupTestRouter()
 	router.PUT("/web/config/:school/:grade/timetable", PutTimetable)
 
-	w := doRawRequest(router, "PUT", "/web/config/school1/grade1/timetable", "invalid")
+	w := doRawRequest(t, router, "PUT", "/web/config/school1/grade1/timetable", "invalid")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -394,7 +394,7 @@ func TestPutTimetable_Success(t *testing.T) {
 		},
 		"divider": map[string]interface{}{},
 	}
-	w := doRequest(router, "PUT", "/web/config/school1/grade1/timetable", body)
+	w := doRequest(t, router, "PUT", "/web/config/school1/grade1/timetable", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -410,7 +410,7 @@ func TestPutTimetable_MissingChangri(t *testing.T) {
 			"考试周": map[string]interface{}{"早上1": 1},
 		},
 	}
-	w := doRequest(router, "PUT", "/web/config/school1/grade1/timetable", body)
+	w := doRequest(t, router, "PUT", "/web/config/school1/grade1/timetable", body)
 
 	// 契约：必须保留“常日”作息表
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -422,7 +422,7 @@ func TestPutScheduleConfig_InvalidJSON(t *testing.T) {
 	router := setupTestRouter()
 	router.PUT("/web/config/:school/:grade/:class_number/schedule", PutScheduleConfig)
 
-	w := doRawRequest(router, "PUT", "/web/config/school1/grade1/class1/schedule", "invalid")
+	w := doRawRequest(t, router, "PUT", "/web/config/school1/grade1/class1/schedule", "invalid")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -439,7 +439,7 @@ func TestPutScheduleConfig_Success(t *testing.T) {
 		"classList": []interface{}{[]interface{}{"数"}},
 		"timetable": "常日",
 	}
-	w := doRequest(router, "PUT", "/web/config/school1/grade1/class1/schedule", body)
+	w := doRequest(t, router, "PUT", "/web/config/school1/grade1/class1/schedule", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -450,7 +450,7 @@ func TestPutSettings_InvalidJSON(t *testing.T) {
 	router := setupTestRouter()
 	router.PUT("/web/config/:school/:grade/:class_number/settings", PutSettings)
 
-	w := doRawRequest(router, "PUT", "/web/config/school1/grade1/class1/settings", "invalid")
+	w := doRawRequest(t, router, "PUT", "/web/config/school1/grade1/class1/settings", "invalid")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -465,7 +465,7 @@ func TestPutSettings_Success(t *testing.T) {
 		"countdown_target": "2025-12-31",
 		"banner_text":      "欢迎",
 	}
-	w := doRequest(router, "PUT", "/web/config/school1/grade1/class1/settings", body)
+	w := doRequest(t, router, "PUT", "/web/config/school1/grade1/class1/settings", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -476,7 +476,7 @@ func TestCopyConfig_InvalidJSON(t *testing.T) {
 	router := setupTestRouter()
 	router.POST("/web/config/copy", CopyConfig)
 
-	w := doRawRequest(router, "POST", "/web/config/copy", "invalid")
+	w := doRawRequest(t, router, "POST", "/web/config/copy", "invalid")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -491,7 +491,7 @@ func TestCopyConfig_MissingSource(t *testing.T) {
 		"from": map[string]interface{}{"school": "nosrc", "grade": "g", "class": "c"},
 		"to":   map[string]interface{}{"school": "dst", "grade": "g", "class": "c"},
 	}
-	w := doRequest(router, "POST", "/web/config/copy", body)
+	w := doRequest(t, router, "POST", "/web/config/copy", body)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
@@ -527,7 +527,7 @@ func TestCopyConfig_Success(t *testing.T) {
 		"from": map[string]interface{}{"school": "src", "grade": "g", "class": "c"},
 		"to":   map[string]interface{}{"school": "dst", "grade": "g", "class": "c"},
 	}
-	w := doRequest(router, "POST", "/web/config/copy", body)
+	w := doRequest(t, router, "POST", "/web/config/copy", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -549,7 +549,7 @@ func TestPutCompensationRule_InvalidDate(t *testing.T) {
 		"type": 0, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "invalid", "useDate": "2025-09-29"},
 	}
-	w := doRequest(router, "PUT", "/web/autorun/compensation", body)
+	w := doRequest(t, router, "PUT", "/web/autorun/compensation", body)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -564,7 +564,7 @@ func TestPutCompensationRule_Success(t *testing.T) {
 		"type": 0, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-10-01", "useDate": "2025-09-29"},
 	}
-	w := doRequest(router, "PUT", "/web/autorun/compensation", body)
+	w := doRequest(t, router, "PUT", "/web/autorun/compensation", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -579,7 +579,7 @@ func TestPutTimetableRule_Success(t *testing.T) {
 		"type": 1, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-10-08", "timetableId": "exam"},
 	}
-	w := doRequest(router, "PUT", "/web/autorun/timetable", body)
+	w := doRequest(t, router, "PUT", "/web/autorun/timetable", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -594,7 +594,7 @@ func TestPutScheduleRule_MissingPeriods(t *testing.T) {
 		"type": 2, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-10-09", "schedule": map[string]interface{}{}},
 	}
-	w := doRequest(router, "PUT", "/web/autorun/schedule", body)
+	w := doRequest(t, router, "PUT", "/web/autorun/schedule", body)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -612,7 +612,7 @@ func TestPutScheduleRule_Success(t *testing.T) {
 			"schedule": map[string]interface{}{"periods": []interface{}{map[string]interface{}{"no": 1, "subject": "数"}}},
 		},
 	}
-	w := doRequest(router, "PUT", "/web/autorun/schedule", body)
+	w := doRequest(t, router, "PUT", "/web/autorun/schedule", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -631,7 +631,7 @@ func TestPutAllRule_Success(t *testing.T) {
 			"schedule":    map[string]interface{}{"periods": []interface{}{map[string]interface{}{"no": 1, "subject": "班会"}}},
 		},
 	}
-	w := doRequest(router, "PUT", "/web/autorun/all", body)
+	w := doRequest(t, router, "PUT", "/web/autorun/all", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -660,7 +660,7 @@ func TestDeleteAutorunRecord_Success(t *testing.T) {
 		"type": 0, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-11-01", "useDate": "2025-10-31"},
 	}
-	w := doRequest(router, "PUT", "/web/autorun/compensation", body)
+	w := doRequest(t, router, "PUT", "/web/autorun/compensation", body)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var resp map[string]interface{}
@@ -690,7 +690,7 @@ func TestPutCountdownRule_Success(t *testing.T) {
 			{"name": "期末考试", "date": "2026-01-01", "priority": 1},
 		},
 	}
-	w := doRequest(router, "PUT", "/web/countdown", body)
+	w := doRequest(t, router, "PUT", "/web/countdown", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
