@@ -435,32 +435,41 @@ func PutScheduleConfig(c *gin.Context) {
 	if modelVal, ok := raw["model"].(map[string]interface{}); ok {
 		bodyMap = modelVal
 	}
+	// 契约校验：请求体必须携带完整的 7 天 daily_class 数组，
+	// 否则会导致该班课表被静默清空（防坏请求覆盖既有数据）。
+	dailyClassRaw, ok := bodyMap["daily_class"].([]interface{})
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "daily_class 必须为数组"})
+		return
+	}
+	if len(dailyClassRaw) != 7 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "daily_class 必须包含 7 天（日一二三四五六）"})
+		return
+	}
 	body := schedulePayload{}
-	if arr, ok := bodyMap["daily_class"].([]interface{}); ok {
-		for _, one := range arr {
-			obj, ok := one.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			item := dailyClassInput{}
-			item.Chinese, _ = obj["Chinese"].(string)
-			item.English, _ = obj["English"].(string)
-			item.Timetable, _ = obj["timetable"].(string)
-			if classListRaw, ok := obj["classList"].([]interface{}); ok {
-				for _, classItem := range classListRaw {
-					if arr2, ok := classItem.([]interface{}); ok {
-						line := make([]string, 0, len(arr2))
-						for _, x := range arr2 {
-							if s, ok := x.(string); ok {
-								line = append(line, s)
-							}
+	for _, one := range dailyClassRaw {
+		obj, ok := one.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		item := dailyClassInput{}
+		item.Chinese, _ = obj["Chinese"].(string)
+		item.English, _ = obj["English"].(string)
+		item.Timetable, _ = obj["timetable"].(string)
+		if classListRaw, ok := obj["classList"].([]interface{}); ok {
+			for _, classItem := range classListRaw {
+				if arr2, ok := classItem.([]interface{}); ok {
+					line := make([]string, 0, len(arr2))
+					for _, x := range arr2 {
+						if s, ok := x.(string); ok {
+							line = append(line, s)
 						}
-						item.ClassList = append(item.ClassList, line)
 					}
+					item.ClassList = append(item.ClassList, line)
 				}
 			}
-			body.DailyClass = append(body.DailyClass, item)
 		}
+		body.DailyClass = append(body.DailyClass, item)
 	}
 
 	var daily [7]dbTable.DailyClass
