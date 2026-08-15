@@ -25,8 +25,10 @@ func CreateSchool(c *gin.Context) {
 		return
 	}
 
+	// 学校是否存在以关联的科目行判断（学校本身没有独立表行，
+	// 按 Schedule 行判断会在“学校尚无班级”时漏判，导致重复创建返回 200）
 	var count int64
-	db.GetDB().Model(&dbTable.Schedule{}).Where(whereSchool, req.Name).Count(&count)
+	db.GetDB().Model(&dbTable.Subject{}).Where(whereSchool, req.Name).Count(&count)
 	if count > 0 {
 		c.JSON(http.StatusConflict, gin.H{"detail": "学校已存在"})
 		return

@@ -264,6 +264,10 @@ func TestRouteTable_StructureCRUDFlow(t *testing.T) {
 	assert.Contains(t, timetable.Timetable, "常日")
 	assert.Contains(t, timetable.Timetable, "没课")
 
+	// 学校已有关联数据（默认科目/作息）时重复创建同名学校 -> 409
+	w = contractRequest(t, router, "POST", "/web/schools", map[string]string{"name": "测试学校"}, h)
+	assert.Equal(t, http.StatusConflict, w.Code)
+
 	// 创建班级：应生成默认课表与客户端配置
 	w = contractRequest(t, router, "POST", "/web/schools/测试学校/grades/2026/classes", map[string]string{"name": "1"}, h)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -279,9 +283,6 @@ func TestRouteTable_StructureCRUDFlow(t *testing.T) {
 	assert.NoError(t, db.GetDB().Where("school = ? AND grade = ? AND class = ?", "测试学校", "2026", "1").First(&clientConfig).Error)
 	assert.NotEmpty(t, clientConfig.CSSStyle)
 
-	// 学校已有班级数据后，重复创建同名学校 -> 409
-	w = contractRequest(t, router, "POST", "/web/schools", map[string]string{"name": "测试学校"}, h)
-	assert.Equal(t, http.StatusConflict, w.Code)
 	// 年级已有班级数据后，重复创建同名年级 -> 409
 	w = contractRequest(t, router, "POST", "/web/schools/测试学校/grades", map[string]string{"name": "2026"}, h)
 	assert.Equal(t, http.StatusConflict, w.Code)
