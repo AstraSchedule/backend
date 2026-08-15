@@ -902,17 +902,7 @@ func TestPutTimetableRule_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// 回读验证持久化
-	var putResp map[string]interface{}
-	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &putResp))
-	hashID := putResp["id"].(string)
-	assert.NotEmpty(t, hashID)
-
-	w = doRequest(t, router, "GET", "/web/autorun/hash/"+hashID, nil)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	item, ok := resp["data"].(map[string]interface{})
-	require.True(t, ok, "详情 data 应为对象")
+	item := fetchAutorunDetail(t, router, w)
 	assert.Equal(t, "TIMETABLE", item["type"])
 	content, ok := item["content"].(map[string]interface{})
 	require.True(t, ok, "content 应为对象")
@@ -953,17 +943,7 @@ func TestPutScheduleRule_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// 回读验证持久化
-	var putResp map[string]interface{}
-	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &putResp))
-	hashID := putResp["id"].(string)
-	assert.NotEmpty(t, hashID)
-
-	w = doRequest(t, router, "GET", "/web/autorun/hash/"+hashID, nil)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	item, ok := resp["data"].(map[string]interface{})
-	require.True(t, ok, "详情 data 应为对象")
+	item := fetchAutorunDetail(t, router, w)
 	assert.Equal(t, "SCHEDULE", item["type"])
 	content, ok := item["content"].(map[string]interface{})
 	require.True(t, ok, "content 应为对象")
@@ -994,17 +974,7 @@ func TestPutAllRule_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// 回读验证持久化
-	var putResp map[string]interface{}
-	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &putResp))
-	hashID := putResp["id"].(string)
-	assert.NotEmpty(t, hashID)
-
-	w = doRequest(t, router, "GET", "/web/autorun/hash/"+hashID, nil)
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	item, ok := resp["data"].(map[string]interface{})
-	require.True(t, ok, "详情 data 应为对象")
+	item := fetchAutorunDetail(t, router, w)
 	assert.Equal(t, "ALL", item["type"])
 	content, ok := item["content"].(map[string]interface{})
 	require.True(t, ok, "content 应为对象")

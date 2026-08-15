@@ -7,7 +7,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"AstraScheduleServerGo/db"
+	"AstraScheduleServerGo/model/dbTable"
+
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 // doRawRequest 以原始字符串作为请求体执行请求并返回 recorder，
@@ -40,4 +44,31 @@ func doRequest(t *testing.T, router *gin.Engine, method, path string, body inter
 		return nil
 	}
 	return doRawRequest(t, router, method, path, string(b))
+}
+
+// fetchAutorunDetail 从 PUT 自动任务规则的响应中取 id，回读 /web/autorun/hash 详情并返回 data 对象。
+// 供 timetable/schedule/all 三类规则的成功用例共用，避免重复的回读样板被 SonarQube 计入重复率。
+func fetchAutorunDetail(t *testing.T, router *gin.Engine, putRecorder *httptest.ResponseRecorder) map[string]interface{} {
+	t.Helper()
+	var putBody map[string]interface{}
+	require.NoError(t, json.Unmarshal(putRecorder.Body.Bytes(), &putBody))
+	hashID, ok := putBody["id"].(string)
+	require.True(t, ok, "PUT 响应应包含 id")
+	require.NotEmpty(t, hashID)
+
+	w := doRequest(t, router, "GET", "/web/autorun/hash/"+hashID, nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	item, ok := resp["data"].(map[string]interface{})
+	require.True(t, ok, "详情 data 应为对象")
+	return item
+}
+
+// fetchUser 按主键回读用户行，供用户 CRUD/改密成功用例验证持久化共用。
+func fetchUser(t *testing.T, id uint) dbTable.User {
+	t.Helper()
+	var saved dbTable.User
+	require.NoError(t, db.GetDB().First(&saved, id).Error)
+	return saved
 }

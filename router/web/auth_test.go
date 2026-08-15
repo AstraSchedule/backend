@@ -200,6 +200,21 @@ func TestVerifyPassword_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+// changePasswordRouter 挂载带测试用户 claims 的改密路由，供各改密用例共用，消除重复包装样板
+func changePasswordRouter(t *testing.T, user *dbTable.User) *gin.Engine {
+	t.Helper()
+	router := setupTestRouter()
+	router.POST("/web/auth/change-password", func(c *gin.Context) {
+		c.Set("user_claims", &service.JWTClaims{
+			UserID:   user.ID,
+			Username: user.Username,
+			Role:     user.Role,
+		})
+		ChangePassword(c)
+	})
+	return router
+}
+
 // ChangePassword tests
 
 func TestChangePassword_NoAuth(t *testing.T) {
@@ -215,15 +230,7 @@ func TestChangePassword_ShortPassword(t *testing.T) {
 	ensureTestDB()
 	user := setupTestUser(t)
 
-	router := setupTestRouter()
-	router.POST("/web/auth/change-password", func(c *gin.Context) {
-		c.Set("user_claims", &service.JWTClaims{
-			UserID:   user.ID,
-			Username: user.Username,
-			Role:     user.Role,
-		})
-		ChangePassword(c)
-	})
+	router := changePasswordRouter(t, user)
 
 	body := map[string]string{"old_password": "test123", "new_password": "123"}
 	w := doRequest(t, router, "POST", "/web/auth/change-password", body)
@@ -235,15 +242,7 @@ func TestChangePassword_WrongOldPassword(t *testing.T) {
 	ensureTestDB()
 	user := setupTestUser(t)
 
-	router := setupTestRouter()
-	router.POST("/web/auth/change-password", func(c *gin.Context) {
-		c.Set("user_claims", &service.JWTClaims{
-			UserID:   user.ID,
-			Username: user.Username,
-			Role:     user.Role,
-		})
-		ChangePassword(c)
-	})
+	router := changePasswordRouter(t, user)
 
 	body := map[string]string{"old_password": "wrongpassword", "new_password": "newpassword123"}
 	w := doRequest(t, router, "POST", "/web/auth/change-password", body)
@@ -255,15 +254,7 @@ func TestChangePassword_Success(t *testing.T) {
 	ensureTestDB()
 	user := setupTestUser(t)
 
-	router := setupTestRouter()
-	router.POST("/web/auth/change-password", func(c *gin.Context) {
-		c.Set("user_claims", &service.JWTClaims{
-			UserID:   user.ID,
-			Username: user.Username,
-			Role:     user.Role,
-		})
-		ChangePassword(c)
-	})
+	router := changePasswordRouter(t, user)
 
 	body := map[string]string{"old_password": "test123", "new_password": "newpassword123"}
 	w := doRequest(t, router, "POST", "/web/auth/change-password", body)
@@ -271,8 +262,7 @@ func TestChangePassword_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// 回读验证密码确实更新，且 must_change_pwd 被清除
-	var saved dbTable.User
-	assert.NoError(t, db.GetDB().First(&saved, user.ID).Error)
+	saved := fetchUser(t, user.ID)
 	assert.True(t, service.CheckPassword("newpassword123", saved.PasswordHash))
 	assert.False(t, saved.MustChangePwd)
 }
@@ -281,15 +271,7 @@ func TestChangePassword_ShortUsername(t *testing.T) {
 	ensureTestDB()
 	user := setupTestUser(t)
 
-	router := setupTestRouter()
-	router.POST("/web/auth/change-password", func(c *gin.Context) {
-		c.Set("user_claims", &service.JWTClaims{
-			UserID:   user.ID,
-			Username: user.Username,
-			Role:     user.Role,
-		})
-		ChangePassword(c)
-	})
+	router := changePasswordRouter(t, user)
 
 	body := map[string]string{"old_password": "test123", "new_password": "newpassword123", "new_username": "ab"}
 	w := doRequest(t, router, "POST", "/web/auth/change-password", body)
@@ -301,23 +283,14 @@ func TestChangePassword_WithNewUsername(t *testing.T) {
 	ensureTestDB()
 	user := setupTestUser(t)
 
-	router := setupTestRouter()
-	router.POST("/web/auth/change-password", func(c *gin.Context) {
-		c.Set("user_claims", &service.JWTClaims{
-			UserID:   user.ID,
-			Username: user.Username,
-			Role:     user.Role,
-		})
-		ChangePassword(c)
-	})
+	router := changePasswordRouter(t, user)
 
 	// usr-dashboard ChangePassword.vue 会同时提交 new_username
 	body := map[string]string{"old_password": "test123", "new_password": "newpassword123", "new_username": "renameduser"}
 	w := doRequest(t, router, "POST", "/web/auth/change-password", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var saved dbTable.User
-	assert.NoError(t, db.GetDB().First(&saved, user.ID).Error)
+	saved := fetchUser(t, user.ID)
 	assert.Equal(t, "renameduser", saved.Username)
 	assert.True(t, service.CheckPassword("newpassword123", saved.PasswordHash))
 }
@@ -449,8 +422,7 @@ func TestUpdateUser_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// 回读验证持久化
-	var saved dbTable.User
-	assert.NoError(t, db.GetDB().First(&saved, user.ID).Error)
+	saved := fetchUser(t, user.ID)
 	assert.Equal(t, "updateduser", saved.Username)
 	assert.Equal(t, "readonly", saved.Role)
 	assert.Equal(t, "s1/g1/c1", saved.Scope)
