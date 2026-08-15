@@ -820,6 +820,11 @@ func TestCopyConfig_Success(t *testing.T) {
 	w := doRequest(t, router, "POST", "/web/config/copy", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+	// 契约：响应为复制配置自身的 from/to 结构，而不是内部广播的 SyncConfig 载荷
+	var copyResp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &copyResp))
+	assert.Contains(t, copyResp, "from")
+	assert.Contains(t, copyResp, "to")
 
 	// 验证目标班级已复制科目配置
 	var dstSubject dbTable.Subject

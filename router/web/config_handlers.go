@@ -156,6 +156,7 @@ func PutSubjects(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	client.BroadcastSync(school, grade)
 	c.JSON(http.StatusOK, gin.H{"status": 200})
 }
 
@@ -224,6 +225,7 @@ func PutTimetable(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	client.BroadcastSync(school, grade)
 	c.JSON(http.StatusOK, gin.H{"status": 200})
 }
 
@@ -367,7 +369,8 @@ func CopyConfig(c *gin.Context) {
 		return
 	}
 
-	client.BroadcastSyncConfig(c)
+	// 复制后通知目标班级所在年级的在线客户端刷新（来源班级数据未变，无需广播）
+	client.BroadcastSync(payload.To.School, payload.To.Grade)
 	c.JSON(http.StatusOK, gin.H{
 		"status": 200,
 		"from": gin.H{
@@ -492,6 +495,7 @@ func PutScheduleConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	client.BroadcastSync(school, grade)
 	c.JSON(http.StatusOK, gin.H{"status": 200})
 }
 
@@ -517,6 +521,7 @@ func PutSettings(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	client.BroadcastSyncConfig(c)
+	// 通用设置影响桌面端渲染，广播刷新
+	client.BroadcastSync(school, grade)
 	c.JSON(http.StatusOK, gin.H{"status": 200})
 }

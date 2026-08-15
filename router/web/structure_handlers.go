@@ -38,6 +38,8 @@ func CreateSchool(c *gin.Context) {
 		return
 	}
 
+	// 学校登记影响全局结构，广播所有在线客户端
+	broadcastScopes([]string{"ALL"})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "学校创建成功"})
 }
 
@@ -62,6 +64,7 @@ func DeleteSchool(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	broadcastScopes([]string{school})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "学校已删除"})
 }
 
@@ -140,6 +143,8 @@ func CreateGrade(c *gin.Context) {
 		return
 	}
 
+	// 年级创建生成默认科目/作息，广播该年级客户端刷新
+	broadcastScopes([]string{school + "/" + req.Name})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "年级创建成功"})
 }
 
@@ -161,6 +166,7 @@ func DeleteGrade(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	broadcastScopes([]string{school + "/" + grade})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "年级已删除"})
 }
 
@@ -240,6 +246,8 @@ func CreateClass(c *gin.Context) {
 	}
 	db.GetDB().Clauses(clause.OnConflict{DoNothing: true}).Create(&clientConfig)
 
+	// 班级创建生成默认课表与客户端配置，广播该年级客户端刷新
+	broadcastScopes([]string{school + "/" + grade})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "班级创建成功"})
 }
 
@@ -259,5 +267,6 @@ func DeleteClass(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	broadcastScopes([]string{school + "/" + grade})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "班级已删除"})
 }

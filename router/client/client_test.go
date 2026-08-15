@@ -16,7 +16,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-resty/resty/v2"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var testDBInitialized = false
@@ -387,22 +389,88 @@ func TestWebSocketPlaceholder_Serverless(t *testing.T) {
 	assert.Equal(t, http.StatusNotImplemented, w.Code)
 }
 
-// BroadcastSyncConfig tests
+// BroadcastSync 内部广播测试（外部 /api/broadcast 入口已废弃移除）
 
-func TestBroadcastSyncConfig_Success(t *testing.T) {
+func TestBroadcastSync_ServerlessDisabled(t *testing.T) {
 	ensureTestDB()
 
-	router := setupTestRouter()
-	router.POST("/api/broadcast/:school/:grade/:class_number", BroadcastSyncConfig)
+	orig := model.Configs.Run.Serverless
+	model.Configs.Run.Serverless = true
+	t.Cleanup(func() { model.Configs.Run.Serverless = orig })
 
-	w := doClientRequest(t, router, "POST", "/api/broadcast/school1/grade1/class1")
+	// serverless 模式禁用 WebSocket，内部广播必须直接跳过
+	assert.Equal(t, 0, BroadcastSync("school1", "grade1"))
+	assert.Equal(t, 0, BroadcastSyncSchool("school1"))
+	assert.Equal(t, 0, BroadcastSyncAll())
+}
 
-	// 契约：无在线连接时仍返回 200 与 SyncConfig 消息（认证由路由层 AdminOrToken 保证，main_test.go 覆盖）
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "SyncConfig", resp["message"])
-	assert.Equal(t, float64(200), resp["status"])
-	assert.Contains(t, resp, "sent")
-	assert.Contains(t, resp, "websocket_enabled")
+func TestBroadcastSync_NoClients(t *testing.T) {
+	ensureTestDB()
+
+	orig := model.Configs.Run.Serverless
+	model.Configs.Run.Serverless = false
+	t.Cleanup(func() { model.Configs.Run.Serverless = orig })
+
+	assert.Equal(t, 0, BroadcastSync("nobody", "here"))
+	assert.Equal(t, 0, BroadcastSyncSchool("nobody"))
+	assert.Equal(t, 0, BroadcastSyncAll())
+}
+
+func TestBroadcastSync_DeliversToConnectedClient(t *testing.T) {
+	ensureTestDB()
+
+	orig := model.Configs.Run.Serverless
+	model.Configs.Run.Serverless = false
+	t.Cleanup(func() { model.Configs.Run.Serverless = orig })
+
+	// 起真实 WebSocket 服务：升级成功后把连接注册进 hub，模拟在线客户端
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		scope := wsScope{School: "39", Grade: "2023"}
+		clientWsHub.add(scope, "1", conn)
+		defer clientWsHub.remove(scope, conn)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// 等待服务端完成 hub 注册
+	deadline := time.Now().Add(2 * time.Second)
+	for clientWsHub.count(wsScope{School: "39", Grade: "2023"}) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.Equal(t, 1, clientWsHub.count(wsScope{School: "39", Grade: "2023"}))
+
+	// 年级级广播应送达
+	assert.Equal(t, 1, BroadcastSync("39", "2023"))
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, msg, err := conn.ReadMessage()
+	require.NoError(t, err)
+	assert.Equal(t, "SyncConfig", string(msg))
+
+	// 学校级广播应送达
+	assert.Equal(t, 1, BroadcastSyncSchool("39"))
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, msg, err = conn.ReadMessage()
+	require.NoError(t, err)
+	assert.Equal(t, "SyncConfig", string(msg))
+
+	// 全量广播应送达；无关学校不受影响
+	assert.Equal(t, 1, BroadcastSyncAll())
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, msg, err = conn.ReadMessage()
+	require.NoError(t, err)
+	assert.Equal(t, "SyncConfig", string(msg))
+	assert.Equal(t, 0, BroadcastSync("other", "school"))
 }

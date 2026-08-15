@@ -2,6 +2,7 @@ package web
 
 import (
 	"AstraScheduleServerGo/model/dbTable"
+	"AstraScheduleServerGo/router/client"
 	"crypto/sha256"
 	"encoding/hex"
 	"sort"
@@ -140,4 +141,22 @@ func parseScope(scope string) (string, string, string, bool) {
 		return "", "", "", false
 	}
 	return parts[0], parts[1], parts[2], true
+}
+
+// broadcastScopes 按作用域列表向在线客户端广播 SyncConfig（仅 WebSocket 模式生效，serverless 自动跳过）。
+// 支持 ALL / school / school/grade 粒度；返回成功发送条数。
+func broadcastScopes(scopes []string) int {
+	total := 0
+	for _, raw := range scopes {
+		parts := strings.Split(strings.TrimSpace(raw), "/")
+		switch {
+		case raw == "" || strings.EqualFold(raw, "ALL"):
+			total += client.BroadcastSyncAll()
+		case len(parts) >= 2 && parts[0] != "" && parts[1] != "":
+			total += client.BroadcastSync(parts[0], parts[1])
+		case len(parts) == 1 && parts[0] != "":
+			total += client.BroadcastSyncSchool(parts[0])
+		}
+	}
+	return total
 }

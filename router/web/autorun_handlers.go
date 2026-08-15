@@ -42,6 +42,8 @@ func persistAutorunRule(c *gin.Context, payload autorunPayload, params map[strin
 		return
 	}
 	_, _ = db.RefreshAutorunStatuses(time.Now())
+	// 规则变更影响课表解析，按规则作用域广播刷新
+	broadcastScopes(scope)
 	c.JSON(http.StatusOK, gin.H{"status": 200, "id": hashID})
 }
 
@@ -118,6 +120,11 @@ func GetAutorunHashStatus(c *gin.Context) {
 
 func DeleteAutorunRecord(c *gin.Context) {
 	hashid := c.Param("hashid")
+	// 删除前取回规则作用域，删除后按原作用域广播刷新
+	var scopes []string
+	if rows, err := db.FetchAutorunRecords(hashid); err == nil && len(rows) > 0 {
+		scopes = rows[0].Scope
+	}
 	affected, err := db.DeleteAutorunRecord(hashid)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -128,6 +135,7 @@ func DeleteAutorunRecord(c *gin.Context) {
 		return
 	}
 	_, _ = db.RefreshAutorunStatuses(time.Now())
+	broadcastScopes(scopes)
 	c.JSON(http.StatusOK, gin.H{"status": 200, "deleted": affected, "id": hashid})
 }
 
