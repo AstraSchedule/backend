@@ -92,7 +92,11 @@ func CreateGrade(c *gin.Context) {
 			},
 		},
 	}
-	db.GetDB().Clauses(clause.OnConflict{DoNothing: true}).Create(&subject)
+	subjectRes := db.GetDB().Clauses(clause.OnConflict{DoNothing: true}).Create(&subject)
+	if subjectRes.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": subjectRes.Error.Error()})
+		return
+	}
 
 	timetable := dbTable.Timetable{
 		School: school,
@@ -106,7 +110,16 @@ func CreateGrade(c *gin.Context) {
 			Start:   time.Now().Format("2006-01-02"),
 		},
 	}
-	db.GetDB().Clauses(clause.OnConflict{DoNothing: true}).Create(&timetable)
+	timetableRes := db.GetDB().Clauses(clause.OnConflict{DoNothing: true}).Create(&timetable)
+	if timetableRes.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": timetableRes.Error.Error()})
+		return
+	}
+	// 并发下预检查可能双双通过：若两条默认行都未插入，说明年级已被并发请求创建，返回 409
+	if subjectRes.RowsAffected == 0 && timetableRes.RowsAffected == 0 {
+		c.JSON(http.StatusConflict, gin.H{"detail": "年级已存在"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "年级创建成功"})
 }
