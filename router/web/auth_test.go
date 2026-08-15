@@ -226,28 +226,26 @@ func TestChangePassword_NoAuth(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestChangePassword_ShortPassword(t *testing.T) {
+func TestChangePassword_ValidationFailures(t *testing.T) {
 	ensureTestDB()
 	user := setupTestUser(t)
 
 	router := changePasswordRouter(t, user)
 
-	body := map[string]string{"old_password": "test123", "new_password": "123"}
-	w := doRequest(t, router, "POST", "/web/auth/change-password", body)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestChangePassword_WrongOldPassword(t *testing.T) {
-	ensureTestDB()
-	user := setupTestUser(t)
-
-	router := changePasswordRouter(t, user)
-
-	body := map[string]string{"old_password": "wrongpassword", "new_password": "newpassword123"}
-	w := doRequest(t, router, "POST", "/web/auth/change-password", body)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	cases := []struct {
+		name string
+		body map[string]string
+	}{
+		{"新密码过短", map[string]string{"old_password": "test123", "new_password": "123"}},
+		{"旧密码错误", map[string]string{"old_password": "wrongpassword", "new_password": "newpassword123"}},
+		{"新用户名过短", map[string]string{"old_password": "test123", "new_password": "newpassword123", "new_username": "ab"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := doRequest(t, router, "POST", "/web/auth/change-password", tc.body)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
 }
 
 func TestChangePassword_Success(t *testing.T) {
@@ -265,18 +263,6 @@ func TestChangePassword_Success(t *testing.T) {
 	saved := fetchUser(t, user.ID)
 	assert.True(t, service.CheckPassword("newpassword123", saved.PasswordHash))
 	assert.False(t, saved.MustChangePwd)
-}
-
-func TestChangePassword_ShortUsername(t *testing.T) {
-	ensureTestDB()
-	user := setupTestUser(t)
-
-	router := changePasswordRouter(t, user)
-
-	body := map[string]string{"old_password": "test123", "new_password": "newpassword123", "new_username": "ab"}
-	w := doRequest(t, router, "POST", "/web/auth/change-password", body)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestChangePassword_WithNewUsername(t *testing.T) {

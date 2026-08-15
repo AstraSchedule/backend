@@ -65,6 +65,14 @@ func fetchAutorunDetail(t *testing.T, router *gin.Engine, putRecorder *httptest.
 	return item
 }
 
+// autorunContent 从自动任务详情条目中提取 content 对象，供各规则详情断言共用
+func autorunContent(t *testing.T, item map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	content, ok := item["content"].(map[string]interface{})
+	require.True(t, ok, "content 应为对象")
+	return content
+}
+
 // fetchUser 按主键回读用户行，供用户 CRUD/改密成功用例验证持久化共用。
 func fetchUser(t *testing.T, id uint) dbTable.User {
 	t.Helper()

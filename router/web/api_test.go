@@ -904,9 +904,7 @@ func TestPutTimetableRule_Success(t *testing.T) {
 	// 回读验证持久化
 	item := fetchAutorunDetail(t, router, w)
 	assert.Equal(t, "TIMETABLE", item["type"])
-	content, ok := item["content"].(map[string]interface{})
-	require.True(t, ok, "content 应为对象")
-	assert.Equal(t, "exam", content["timetableId"])
+	assert.Equal(t, "exam", autorunContent(t, item)["timetableId"])
 }
 
 func TestPutScheduleRule_MissingPeriods(t *testing.T) {
@@ -945,9 +943,7 @@ func TestPutScheduleRule_Success(t *testing.T) {
 	// 回读验证持久化
 	item := fetchAutorunDetail(t, router, w)
 	assert.Equal(t, "SCHEDULE", item["type"])
-	content, ok := item["content"].(map[string]interface{})
-	require.True(t, ok, "content 应为对象")
-	schedule, ok := content["schedule"].(map[string]interface{})
+	schedule, ok := autorunContent(t, item)["schedule"].(map[string]interface{})
 	require.True(t, ok, "content.schedule 应为对象")
 	periods, ok := schedule["periods"].([]interface{})
 	require.True(t, ok, "periods 应为数组")
@@ -976,9 +972,7 @@ func TestPutAllRule_Success(t *testing.T) {
 	// 回读验证持久化
 	item := fetchAutorunDetail(t, router, w)
 	assert.Equal(t, "ALL", item["type"])
-	content, ok := item["content"].(map[string]interface{})
-	require.True(t, ok, "content 应为对象")
-	assert.Equal(t, "exam", content["timetableId"])
+	assert.Equal(t, "exam", autorunContent(t, item)["timetableId"])
 }
 
 func TestDeleteAutorunRecord_NotFound(t *testing.T) {
