@@ -320,3 +320,37 @@ func TestApplyScheduleRules_DateMismatch(t *testing.T) {
 
 	assert.Equal(t, dbTable.ClassList{{"数"}, {"语"}}, resolved[1].ClassList)
 }
+
+func TestApplyScheduleRules_TypePrecedence(t *testing.T) {
+	// 同一日期四种规则同时命中：应用顺序 COMPENSATION → TIMETABLE → SCHEDULE → ALL，后应用者覆盖前者
+	records := []dbTable.AutorunRecord{
+		makeRecord(0, []string{"ALL"}, 1, map[string]interface{}{"date": "2025-10-13", "useDate": "2025-10-15"}),
+		makeRecord(1, []string{"ALL"}, 1, map[string]interface{}{"date": "2025-10-13", "timetableId": "exam"}),
+		makeRecord(2, []string{"ALL"}, 1, map[string]interface{}{
+			"date": "2025-10-13",
+			"schedule": map[string]interface{}{"periods": []interface{}{
+				map[string]interface{}{"no": 1, "subject": "班会"},
+				map[string]interface{}{"no": 2, "subject": "自习"},
+			}},
+		}),
+		makeRecord(3, []string{"ALL"}, 1, map[string]interface{}{
+			"date":        "2025-10-13",
+			"timetableId": "常日",
+			"schedule": map[string]interface{}{"periods": []interface{}{
+				map[string]interface{}{"no": 1, "subject": "考试"},
+			}},
+		}),
+	}
+	resolved := ApplyScheduleRules(baseSchedule(), baseTimetable(), records, "s", "g", "c", mondayDate())
+
+	// ALL 最后应用覆盖前三种规则；FixWrongTimetable 按常日 2 节补齐占位
+	assert.Equal(t, "常日", resolved[1].Timetable)
+	assert.Equal(t, dbTable.ClassList{{"考试"}, {"课"}}, resolved[1].ClassList)
+}
+
+func TestCalcWeekNumber_SundayBoundary(t *testing.T) {
+	// 开学日恰逢周日：当天为第 1 周，7 天后进入第 2 周
+	start := time.Date(2025, 9, 7, 0, 0, 0, 0, time.UTC) // 2025-09-07 是周日
+	assert.Equal(t, 1, CalcWeekNumber("2025-09-07", start))
+	assert.Equal(t, 2, CalcWeekNumber("2025-09-07", start.Add(7*24*time.Hour)))
+}

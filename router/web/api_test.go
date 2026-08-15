@@ -234,6 +234,7 @@ func TestGetTimetableOptions_Contract(t *testing.T) {
 	w := doRequest(t, router, "GET", "/web/config/school1/grade1/timetable/options", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 	// 契约：options 为 [{label,value,need}]（usr-dashboard fetchTimetableOptions 依赖）
+	// need 语义：period 下标从 0 起，need = 最大下标 + 1（即所需课节行数）
 	var resp map[string]interface{}
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	options := resp["options"].([]interface{})
@@ -242,7 +243,7 @@ func TestGetTimetableOptions_Contract(t *testing.T) {
 	require.True(t, ok, "options 项应为对象")
 	assert.Equal(t, "常日", opt["label"])
 	assert.Equal(t, "常日", opt["value"])
-	assert.Equal(t, float64(1), opt["need"])
+	assert.Equal(t, float64(2), opt["need"], "两个节次(下标0/1)应得出 need=2")
 }
 
 func TestGetTimetable_Contract(t *testing.T) {
@@ -890,6 +891,7 @@ func TestPutTimetableRule_Success(t *testing.T) {
 
 	router := setupTestRouter()
 	router.PUT("/web/autorun/timetable", PutTimetableRule)
+	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
 		"type": 1, "scope": []string{"ALL"}, "priority": 1,
@@ -898,6 +900,23 @@ func TestPutTimetableRule_Success(t *testing.T) {
 	w := doRequest(t, router, "PUT", "/web/autorun/timetable", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化
+	var putResp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &putResp))
+	hashID := putResp["id"].(string)
+	assert.NotEmpty(t, hashID)
+
+	w = doRequest(t, router, "GET", "/web/autorun/hash/"+hashID, nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	item, ok := resp["data"].(map[string]interface{})
+	require.True(t, ok, "详情 data 应为对象")
+	assert.Equal(t, "TIMETABLE", item["type"])
+	content, ok := item["content"].(map[string]interface{})
+	require.True(t, ok, "content 应为对象")
+	assert.Equal(t, "exam", content["timetableId"])
 }
 
 func TestPutScheduleRule_MissingPeriods(t *testing.T) {
@@ -920,6 +939,7 @@ func TestPutScheduleRule_Success(t *testing.T) {
 
 	router := setupTestRouter()
 	router.PUT("/web/autorun/schedule", PutScheduleRule)
+	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
 		"type": 2, "scope": []string{"ALL"}, "priority": 1,
@@ -931,6 +951,27 @@ func TestPutScheduleRule_Success(t *testing.T) {
 	w := doRequest(t, router, "PUT", "/web/autorun/schedule", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化
+	var putResp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &putResp))
+	hashID := putResp["id"].(string)
+	assert.NotEmpty(t, hashID)
+
+	w = doRequest(t, router, "GET", "/web/autorun/hash/"+hashID, nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	item, ok := resp["data"].(map[string]interface{})
+	require.True(t, ok, "详情 data 应为对象")
+	assert.Equal(t, "SCHEDULE", item["type"])
+	content, ok := item["content"].(map[string]interface{})
+	require.True(t, ok, "content 应为对象")
+	schedule, ok := content["schedule"].(map[string]interface{})
+	require.True(t, ok, "content.schedule 应为对象")
+	periods, ok := schedule["periods"].([]interface{})
+	require.True(t, ok, "periods 应为数组")
+	assert.Len(t, periods, 1)
 }
 
 func TestPutAllRule_Success(t *testing.T) {
@@ -938,6 +979,7 @@ func TestPutAllRule_Success(t *testing.T) {
 
 	router := setupTestRouter()
 	router.PUT("/web/autorun/all", PutAllRule)
+	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
 		"type": 3, "scope": []string{"ALL"}, "priority": 1,
@@ -950,6 +992,23 @@ func TestPutAllRule_Success(t *testing.T) {
 	w := doRequest(t, router, "PUT", "/web/autorun/all", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化
+	var putResp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &putResp))
+	hashID := putResp["id"].(string)
+	assert.NotEmpty(t, hashID)
+
+	w = doRequest(t, router, "GET", "/web/autorun/hash/"+hashID, nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	item, ok := resp["data"].(map[string]interface{})
+	require.True(t, ok, "详情 data 应为对象")
+	assert.Equal(t, "ALL", item["type"])
+	content, ok := item["content"].(map[string]interface{})
+	require.True(t, ok, "content 应为对象")
+	assert.Equal(t, "exam", content["timetableId"])
 }
 
 func TestDeleteAutorunRecord_NotFound(t *testing.T) {

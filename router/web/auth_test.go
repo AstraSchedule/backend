@@ -269,6 +269,57 @@ func TestChangePassword_Success(t *testing.T) {
 	w := doRequest(t, router, "POST", "/web/auth/change-password", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证密码确实更新，且 must_change_pwd 被清除
+	var saved dbTable.User
+	assert.NoError(t, db.GetDB().First(&saved, user.ID).Error)
+	assert.True(t, service.CheckPassword("newpassword123", saved.PasswordHash))
+	assert.False(t, saved.MustChangePwd)
+}
+
+func TestChangePassword_ShortUsername(t *testing.T) {
+	ensureTestDB()
+	user := setupTestUser(t)
+
+	router := setupTestRouter()
+	router.POST("/web/auth/change-password", func(c *gin.Context) {
+		c.Set("user_claims", &service.JWTClaims{
+			UserID:   user.ID,
+			Username: user.Username,
+			Role:     user.Role,
+		})
+		ChangePassword(c)
+	})
+
+	body := map[string]string{"old_password": "test123", "new_password": "newpassword123", "new_username": "ab"}
+	w := doRequest(t, router, "POST", "/web/auth/change-password", body)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestChangePassword_WithNewUsername(t *testing.T) {
+	ensureTestDB()
+	user := setupTestUser(t)
+
+	router := setupTestRouter()
+	router.POST("/web/auth/change-password", func(c *gin.Context) {
+		c.Set("user_claims", &service.JWTClaims{
+			UserID:   user.ID,
+			Username: user.Username,
+			Role:     user.Role,
+		})
+		ChangePassword(c)
+	})
+
+	// usr-dashboard ChangePassword.vue 会同时提交 new_username
+	body := map[string]string{"old_password": "test123", "new_password": "newpassword123", "new_username": "renameduser"}
+	w := doRequest(t, router, "POST", "/web/auth/change-password", body)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var saved dbTable.User
+	assert.NoError(t, db.GetDB().First(&saved, user.ID).Error)
+	assert.Equal(t, "renameduser", saved.Username)
+	assert.True(t, service.CheckPassword("newpassword123", saved.PasswordHash))
 }
 
 // ListUsers tests
@@ -355,6 +406,12 @@ func TestCreateUser_Success(t *testing.T) {
 	w := doRequest(t, router, "POST", "/web/users", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化
+	var saved dbTable.User
+	assert.NoError(t, db.GetDB().Where("username = ?", "newuser").First(&saved).Error)
+	assert.Equal(t, "readonly", saved.Role)
+	assert.NotEmpty(t, saved.PasswordHash)
 }
 
 // UpdateUser tests
@@ -385,10 +442,18 @@ func TestUpdateUser_Success(t *testing.T) {
 	router := setupTestRouter()
 	router.PUT("/web/users/:id", UpdateUser)
 
-	body := map[string]string{"username": "updateduser"}
+	// 同时更新用户名、角色与作用域（usr-dashboard Users.vue 的编辑载荷）
+	body := map[string]string{"username": "updateduser", "role": "readonly", "scope": "s1/g1/c1"}
 	w := doRequest(t, router, "PUT", "/web/users/"+strconv.Itoa(int(user.ID)), body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化
+	var saved dbTable.User
+	assert.NoError(t, db.GetDB().First(&saved, user.ID).Error)
+	assert.Equal(t, "updateduser", saved.Username)
+	assert.Equal(t, "readonly", saved.Role)
+	assert.Equal(t, "s1/g1/c1", saved.Scope)
 }
 
 // DeleteUser tests
@@ -421,4 +486,7 @@ func TestDeleteUser_Success(t *testing.T) {
 	w := doRequest(t, router, "DELETE", "/web/users/"+strconv.Itoa(int(user.ID)), nil)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证用户确实被删除
+	assert.Error(t, db.GetDB().First(&dbTable.User{}, user.ID).Error)
 }

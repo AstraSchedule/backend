@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"AstraScheduleServerGo/db"
+	"AstraScheduleServerGo/model"
 	"AstraScheduleServerGo/model/dbTable"
 	"AstraScheduleServerGo/service"
 	"AstraScheduleServerGo/testutil"
@@ -94,6 +95,11 @@ func createContractUser(t *testing.T, username, password, role string) string {
 func TestRouteTable_AnonymousMatrix(t *testing.T) {
 	router := setupContractEnv(t)
 
+	// 天气路由断言需要无凭据环境（403 不发起上游请求），避免测试触碰真实网络
+	origAPIKey := model.Configs.APIKey
+	model.Configs.APIKey = model.APIKeyConfig{}
+	t.Cleanup(func() { model.Configs.APIKey = origAPIKey })
+
 	cases := []struct {
 		name   string
 		method string
@@ -106,6 +112,9 @@ func TestRouteTable_AnonymousMatrix(t *testing.T) {
 		{"客户端课表写入需认证", "PUT", "/s1/g1/c1", nil, http.StatusUnauthorized},
 		{"广播需认证", "POST", "/api/broadcast/s1/g1/c1", nil, http.StatusUnauthorized},
 		{"WebSocket 无升级头", "GET", "/ws/s1/g1/c1", nil, http.StatusBadRequest},
+		{"天气省市区查询无凭据", "GET", "/api/weather/shanghai/pudong", nil, http.StatusForbidden},
+		{"天气城市查询无凭据", "GET", "/api/weather/shanghai", nil, http.StatusForbidden},
+		{"天气 CF 头查询无头", "GET", "/api/weather/", nil, http.StatusBadRequest},
 		{"菜单", "GET", "/web/menu", nil, http.StatusOK},
 		{"结构树", "GET", "/web/structure", nil, http.StatusOK},
 		{"备份导出需认证", "GET", "/web/backup/export", nil, http.StatusUnauthorized},

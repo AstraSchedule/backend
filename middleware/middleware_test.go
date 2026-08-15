@@ -184,6 +184,34 @@ func TestAdminOrToken_ValidPasswordHeader(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestAdminOrToken_PasswordInBody(t *testing.T) {
+	setupMwEnv(t)
+	user := createMwUser(t, "mwbodyuser", "test123", "admin")
+	token := mwToken(t, user)
+
+	// 走完整 AdminOrToken 链：密码放在 JSON 请求体（中间件读取后必须回填 body 供后续 handler 使用）
+	router := gin.New()
+	router.POST("/test", AdminOrToken(), func(c *gin.Context) {
+		var body map[string]interface{}
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	w := doMwRequest(router, "POST", "/test", `{"password":"test123"}`, map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 错误 body 密码 -> 401
+	w2 := doMwRequest(router, "POST", "/test", `{"password":"wrong"}`, map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+	assert.Equal(t, http.StatusUnauthorized, w2.Code)
+}
+
 func TestExtractPasswordFromRequest_FromHeader(t *testing.T) {
 	setupMwEnv(t)
 	w := httptest.NewRecorder()
