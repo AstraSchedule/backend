@@ -251,9 +251,9 @@ func TestRouteTable_StructureCRUDFlow(t *testing.T) {
 	// 创建年级：应同时生成默认科目与两个默认作息表
 	w = contractRequest(t, router, "POST", "/web/schools/测试学校/grades", map[string]string{"name": "2026"}, h)
 	assert.Equal(t, http.StatusOK, w.Code)
-	// 年级尚无班级数据时重复创建 -> 200（CreateGrade 以班级行数判断冲突）
+	// 年级已存在（默认科目/作息已生成）时重复创建 -> 409
 	w = contractRequest(t, router, "POST", "/web/schools/测试学校/grades", map[string]string{"name": "2026"}, h)
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusConflict, w.Code)
 
 	var subject dbTable.Subject
 	assert.NoError(t, db.GetDB().Where("school = ? AND grade = ?", "测试学校", "2026").First(&subject).Error)

@@ -69,8 +69,10 @@ func CreateGrade(c *gin.Context) {
 		return
 	}
 
+	// 年级是否存在以默认科目/作息行判断（学校与年级本身没有独立表行，
+	// 按 Schedule 行判断会在“年级尚无班级”时漏判，导致重复创建返回 200）
 	var count int64
-	db.GetDB().Model(&dbTable.Schedule{}).Where(whereSchoolGrade, school, req.Name).Count(&count)
+	db.GetDB().Model(&dbTable.Subject{}).Where(whereSchoolGrade, school, req.Name).Count(&count)
 	if count > 0 {
 		c.JSON(http.StatusConflict, gin.H{"detail": "年级已存在"})
 		return
