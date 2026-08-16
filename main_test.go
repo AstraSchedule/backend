@@ -353,10 +353,10 @@ func TestRouteTable_AuthMatrix(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 	t.Run("结构创建 school_w 建本校放行", func(t *testing.T) {
-		sw := createContractUserScoped(t, "schoolw5", "test123", "school_w", "s1")
-		w := contractRequest(t, router, "POST", "/web/schools", map[string]string{"name": "s1"}, authPwd(sw, "test123"))
-		assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-		assert.NotEqual(t, http.StatusForbidden, w.Code)
+		// 用矩阵中未出现过的校名，创建必返 200：精确断言，防止功能失败被宽断言放过
+		sw := createContractUserScoped(t, "schoolw5", "test123", "school_w", "sw-school")
+		w := contractRequest(t, router, "POST", "/web/schools", map[string]string{"name": "sw-school"}, authPwd(sw, "test123"))
+		assert.Equal(t, http.StatusOK, w.Code)
 	})
 	t.Run("结构创建 school_w 建他校被拒 403", func(t *testing.T) {
 		sw := createContractUserScoped(t, "schoolw6", "test123", "school_w", "s1")
