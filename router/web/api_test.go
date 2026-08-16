@@ -310,7 +310,7 @@ func TestGetAutorunStatus_Contract(t *testing.T) {
 	ensureTestDB()
 
 	db.GetDB().Save(&dbTable.AutorunRecord{
-		HashID: "contract-hash", EType: 0, Scope: []string{"ALL"}, Level: 1, Status: 0,
+		HashID: "contract-hash", EType: dbTable.AutorunTypeCompensation, Scope: []string{"ALL"}, Level: 1, Status: 0,
 		Parameters: map[string]interface{}{"rule": map[string]interface{}{"date": "2025-10-01", "useDate": "2025-09-29"}},
 	})
 
@@ -837,7 +837,7 @@ func TestPutCompensationRule_InvalidDate(t *testing.T) {
 	router.PUT("/web/autorun/compensation", PutCompensationRule)
 
 	body := map[string]interface{}{
-		"type": 0, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeCompensation, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "invalid", "useDate": "2025-09-29"},
 	}
 	w := doRequest(t, router, "PUT", "/web/autorun/compensation", body)
@@ -853,7 +853,7 @@ func TestPutCompensationRule_Success(t *testing.T) {
 	router.GET("/web/autorun", GetAutorunStatus)
 
 	body := map[string]interface{}{
-		"type": 0, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeCompensation, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-10-01", "useDate": "2025-09-29"},
 	}
 	w := doRequest(t, router, "PUT", "/web/autorun/compensation", body)
@@ -894,7 +894,7 @@ func TestPutTimetableRule_Success(t *testing.T) {
 	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
-		"type": 1, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeTimetable, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-10-08", "timetableId": "exam"},
 	}
 	w := doRequest(t, router, "PUT", "/web/autorun/timetable", body)
@@ -914,7 +914,7 @@ func TestPutScheduleRule_MissingPeriods(t *testing.T) {
 	router.PUT("/web/autorun/schedule", PutScheduleRule)
 
 	body := map[string]interface{}{
-		"type": 2, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeSchedule, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-10-09", "schedule": map[string]interface{}{}},
 	}
 	w := doRequest(t, router, "PUT", "/web/autorun/schedule", body)
@@ -930,7 +930,7 @@ func TestPutScheduleRule_Success(t *testing.T) {
 	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
-		"type": 2, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeSchedule, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{
 			"date":     "2025-10-09",
 			"schedule": map[string]interface{}{"periods": []interface{}{map[string]interface{}{"no": 1, "subject": "数"}}},
@@ -962,7 +962,7 @@ func TestPutAllRule_Success(t *testing.T) {
 	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
-		"type": 3, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeAll, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{
 			"date":        "2025-10-10",
 			"timetableId": "exam",
@@ -1010,7 +1010,7 @@ func TestDeleteAutorunRecord_Success(t *testing.T) {
 	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
-		"type": 0, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeCompensation, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-11-01", "useDate": "2025-10-31"},
 	}
 	w := doRequest(t, router, "PUT", "/web/autorun/compensation", body)
