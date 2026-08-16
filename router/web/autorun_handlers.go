@@ -2,6 +2,7 @@ package web
 
 import (
 	"AstraScheduleServerGo/db"
+	"AstraScheduleServerGo/middleware"
 	"AstraScheduleServerGo/model/dbTable"
 	"net/http"
 	"strconv"
@@ -33,6 +34,13 @@ func validateDateField(c *gin.Context, fieldName string, value string) bool {
 
 func persistAutorunRule(c *gin.Context, payload autorunPayload, params map[string]interface{}, hashID string) {
 	scope := parseScopeInput(payload.Scope)
+	// 作用域校验：非 admin 用户规则范围不能超出自身 scope（按数据库当前角色与作用域判定）；
+	// ALL 级规则仅 admin 可写，防止校/级/班写角色越权下发全局规则
+	for _, s := range scope {
+		if !middleware.CheckUserScopeString(c, s) {
+			return
+		}
+	}
 	if hashID == "" {
 		hashID = makeHashID(payload.Type, scope, payload.Priority, params)
 	}
@@ -40,6 +48,13 @@ func persistAutorunRule(c *gin.Context, payload autorunPayload, params map[strin
 	var oldScopes []string
 	if rows, err := db.FetchAutorunRecords(hashID); err == nil && len(rows) > 0 {
 		oldScopes = rows[0].Scope
+	}
+	// 更新已有记录时，旧作用域同样必须在本用户权限内：防止小权限用户借 hashID
+	// 覆盖包含无权作用域的记录（新作用域已在前面校验过）
+	for _, s := range oldScopes {
+		if !middleware.CheckUserScopeString(c, s) {
+			return
+		}
 	}
 	record := dbTable.AutorunRecord{HashID: hashID, EType: payload.Type, Scope: scope, Parameters: params, Level: payload.Priority, Status: 0}
 	if err := db.UpsertAutorunRecord(&record); err != nil {

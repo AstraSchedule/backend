@@ -301,8 +301,8 @@ func importCountdownRecords(tx *gorm.DB, rows []dbTable.CountdownRecord, mode st
 	return len(rows), nil
 }
 
-// importUsers 导入用户数据，按 namespace+username 做 upsert
-// 主分支不带 namespace，但保留函数签名一致，方便后续 saas/main 合并
+// importUsers 导入用户数据，主分支按 username 唯一索引做 upsert
+//（saas/main 有 namespace+username 联合唯一索引，冲突目标不同，合并时注意适配）
 func importUsers(tx *gorm.DB, rows []dbTable.User, mode string) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
@@ -311,12 +311,12 @@ func importUsers(tx *gorm.DB, rows []dbTable.User, mode string) (int, error) {
 	var onConflict clause.OnConflict
 	if mode == "skip" {
 		onConflict = clause.OnConflict{
-			Columns:   []clause.Column{{Name: "namespace"}, {Name: "username"}},
+			Columns:   []clause.Column{{Name: "username"}},
 			DoNothing: true,
 		}
 	} else {
 		onConflict = clause.OnConflict{
-			Columns: []clause.Column{{Name: "namespace"}, {Name: "username"}},
+			Columns: []clause.Column{{Name: "username"}},
 			DoUpdates: clause.AssignmentColumns([]string{
 				"password_hash",
 				"role",

@@ -776,7 +776,7 @@ func TestCopyConfig_MissingSource(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.POST("/web/config/copy", CopyConfig)
+	router.POST("/web/config/copy", adminOnly(t), CopyConfig)
 
 	body := map[string]interface{}{
 		"from": map[string]interface{}{"school": "nosrc", "grade": "g", "class": "c"},
@@ -812,7 +812,7 @@ func TestCopyConfig_Success(t *testing.T) {
 	})
 
 	router := setupTestRouter()
-	router.POST("/web/config/copy", CopyConfig)
+	router.POST("/web/config/copy", adminOnly(t), CopyConfig)
 
 	body := map[string]interface{}{
 		"from": map[string]interface{}{"school": "src", "grade": "g", "class": "c"},
@@ -854,7 +854,7 @@ func TestPutCompensationRule_Success(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.PUT("/web/autorun/compensation", PutCompensationRule)
+	router.PUT("/web/autorun/compensation", adminOnly(t), PutCompensationRule)
 	router.GET("/web/autorun", GetAutorunStatus)
 
 	body := map[string]interface{}{
@@ -895,7 +895,7 @@ func TestPutTimetableRule_Success(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.PUT("/web/autorun/timetable", PutTimetableRule)
+	router.PUT("/web/autorun/timetable", adminOnly(t), PutTimetableRule)
 	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
@@ -931,7 +931,7 @@ func TestPutScheduleRule_Success(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.PUT("/web/autorun/schedule", PutScheduleRule)
+	router.PUT("/web/autorun/schedule", adminOnly(t), PutScheduleRule)
 	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
@@ -963,7 +963,7 @@ func TestPutAllRule_Success(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.PUT("/web/autorun/all", PutAllRule)
+	router.PUT("/web/autorun/all", adminOnly(t), PutAllRule)
 	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
@@ -1010,7 +1010,7 @@ func TestDeleteAutorunRecord_Success(t *testing.T) {
 
 	// 先创建一条规则
 	router := setupTestRouter()
-	router.PUT("/web/autorun/compensation", PutCompensationRule)
+	router.PUT("/web/autorun/compensation", adminOnly(t), PutCompensationRule)
 	router.DELETE("/web/autorun/:hashid", DeleteAutorunRecord)
 	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
@@ -1041,7 +1041,7 @@ func TestPutCountdownRule_Success(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.PUT("/web/countdown", PutCountdownRule)
+	router.PUT("/web/countdown", adminOnly(t), PutCountdownRule)
 	router.GET("/web/countdown", GetCountdownStatus)
 
 	body := map[string]interface{}{

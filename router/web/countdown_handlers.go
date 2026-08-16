@@ -2,6 +2,7 @@ package web
 
 import (
 	"AstraScheduleServerGo/db"
+	"AstraScheduleServerGo/middleware"
 	"AstraScheduleServerGo/model/dbTable"
 	"AstraScheduleServerGo/service"
 	"crypto/sha256"
@@ -147,6 +148,12 @@ func PutCountdownRule(c *gin.Context) {
 		return
 	}
 	scope := parseScopeInput(payload.Scope)
+	// 作用域校验：同 autorun——非 admin 用户不能写超出自身 scope 的规则（含 ALL）
+	for _, s := range scope {
+		if !middleware.CheckUserScopeString(c, s) {
+			return
+		}
+	}
 	schedules := normalizeCountdownSchedules(payload.Schedules)
 	if len(schedules) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "schedules 不能为空，且每项需要合法 name/date(YYYY-MM-DD)"})
@@ -161,6 +168,13 @@ func PutCountdownRule(c *gin.Context) {
 	var oldScopes []string
 	if rows, err := db.FetchCountdownRecords(recordID); err == nil && len(rows) > 0 {
 		oldScopes = rows[0].Scope
+	}
+	// 更新已有记录时，旧作用域同样必须在本用户权限内：防止小权限用户借 recordID
+	// 覆盖包含无权作用域的记录（新作用域已在前面校验过）
+	for _, s := range oldScopes {
+		if !middleware.CheckUserScopeString(c, s) {
+			return
+		}
 	}
 	record := dbTable.CountdownRecord{
 		ID:        recordID,
