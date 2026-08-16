@@ -73,12 +73,17 @@ func decodeJSON(t *testing.T, w *httptest.ResponseRecorder) map[string]interface
 
 // createContractUser 创建测试用户并返回登录 token（默认 admin/test123）
 func createContractUser(t *testing.T, username, password, role string) string {
+	return createContractUserScoped(t, username, password, role, "ALL")
+}
+
+// createContractUserScoped 创建指定角色与作用域的测试用户并返回登录 token
+func createContractUserScoped(t *testing.T, username, password, role, scope string) string {
 	t.Helper()
 	hash, err := service.HashPassword(password)
 	require.NoError(t, err)
 	require.NoError(t, db.GetDB().Where("username = ?", username).Delete(&dbTable.User{}).Error)
 	require.NoError(t, db.GetDB().Create(&dbTable.User{
-		Username: username, PasswordHash: hash, Role: role, Scope: "ALL",
+		Username: username, PasswordHash: hash, Role: role, Scope: scope,
 	}).Error)
 
 	w := contractRequest(t, buildRouter(), "POST", "/web/auth/login",
@@ -260,6 +265,82 @@ func TestRouteTable_AuthMatrix(t *testing.T) {
 		}
 		w := contractRequest(t, router, "PUT", "/web/countdown", body, authPwd(adminToken, "test123"))
 		assert.Equal(t, http.StatusOK, w.Code)
+	})
+	t.Run("school_w 写本校课表放行", func(t *testing.T) {
+		// 客户端写路由过 JWTAndPassword + RequireScope；空 body 由 handler 校验（非 401/403 即鉴权放行）
+		sw := createContractUserScoped(t, "schoolw1", "test123", "school_w", "s1")
+		w := contractRequest(t, router, "PUT", "/s1/g1/c1", map[string]interface{}{}, authPwd(sw, "test123"))
+		assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+		assert.NotEqual(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("school_w 写他校课表被拒 403", func(t *testing.T) {
+		sw := createContractUserScoped(t, "schoolw2", "test123", "school_w", "s1")
+		w := contractRequest(t, router, "PUT", "/s2/g1/c1", map[string]interface{}{}, authPwd(sw, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("grade_w 写本年级放行", func(t *testing.T) {
+		gw := createContractUserScoped(t, "gradew1", "test123", "grade_w", "s1/g1")
+		w := contractRequest(t, router, "PUT", "/s1/g1/c2", map[string]interface{}{}, authPwd(gw, "test123"))
+		assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+		assert.NotEqual(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("grade_w 写他年级被拒 403", func(t *testing.T) {
+		gw := createContractUserScoped(t, "gradew2", "test123", "grade_w", "s1/g1")
+		w := contractRequest(t, router, "PUT", "/s1/g2/c1", map[string]interface{}{}, authPwd(gw, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("class_w 写本班放行", func(t *testing.T) {
+		cw := createContractUserScoped(t, "classw1", "test123", "class_w", "s1/g1/c1")
+		w := contractRequest(t, router, "PUT", "/s1/g1/c1", map[string]interface{}{}, authPwd(cw, "test123"))
+		assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+		assert.NotEqual(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("class_w 写他班被拒 403", func(t *testing.T) {
+		cw := createContractUserScoped(t, "classw2", "test123", "class_w", "s1/g1/c1")
+		w := contractRequest(t, router, "PUT", "/s1/g1/c2", map[string]interface{}{}, authPwd(cw, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("非 admin 写 ALL 级规则被拒 403", func(t *testing.T) {
+		sw := createContractUserScoped(t, "schoolw3", "test123", "school_w", "s1")
+		body := map[string]interface{}{
+			"scope":     []string{"ALL"},
+			"schedules": []map[string]interface{}{
+				{"name": "x", "date": "2026-01-01", "priority": 1},
+			},
+		}
+		w := contractRequest(t, router, "PUT", "/web/countdown", body, authPwd(sw, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("school_w 写本校倒数日放行", func(t *testing.T) {
+		sw := createContractUserScoped(t, "schoolw4", "test123", "school_w", "s1")
+		body := map[string]interface{}{
+			"scope":     []string{"s1/g1/c1"},
+			"schedules": []map[string]interface{}{
+				{"name": "x", "date": "2026-01-01", "priority": 1},
+			},
+		}
+		w := contractRequest(t, router, "PUT", "/web/countdown", body, authPwd(sw, "test123"))
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+	t.Run("收窄 scope 后旧 token 越界写被拒 403", func(t *testing.T) {
+		// admin/ALL 用户被收窄为 class_w(s1/g1/c1) 后，旧 token 内嵌 admin/ALL，
+		// 但作用域判定以数据库当前值为准，越界写必须 403
+		narrowed := createContractUserScoped(t, "narrowed1", "test123", "admin", "ALL")
+		require.NoError(t, db.GetDB().Model(&dbTable.User{}).Where("username = ?", "narrowed1").
+			Updates(map[string]interface{}{"role": "class_w", "scope": "s1/g1/c1"}).Error)
+		w := contractRequest(t, router, "PUT", "/s1/g1/c2", map[string]interface{}{}, authPwd(narrowed, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("结构创建 school_w 建本校放行", func(t *testing.T) {
+		sw := createContractUserScoped(t, "schoolw5", "test123", "school_w", "s1")
+		w := contractRequest(t, router, "POST", "/web/schools", map[string]string{"name": "s1"}, authPwd(sw, "test123"))
+		assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+		assert.NotEqual(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("结构创建 school_w 建他校被拒 403", func(t *testing.T) {
+		sw := createContractUserScoped(t, "schoolw6", "test123", "school_w", "s1")
+		w := contractRequest(t, router, "POST", "/web/schools", map[string]string{"name": "s2"}, authPwd(sw, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 	t.Run("篡改 token 被拒 401", func(t *testing.T) {
 		w := contractRequest(t, router, "GET", "/web/auth/me", nil, auth("invalid.token.here"))

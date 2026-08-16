@@ -2,6 +2,7 @@ package web
 
 import (
 	"AstraScheduleServerGo/db"
+	"AstraScheduleServerGo/middleware"
 	"AstraScheduleServerGo/model/dbTable"
 	"AstraScheduleServerGo/router/client"
 	"AstraScheduleServerGo/service"
@@ -245,6 +246,12 @@ func CopyConfig(c *gin.Context) {
 	}
 	if payload.From.School == payload.To.School && payload.From.Grade == payload.To.Grade && fromClass == toClass {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "来源与目标完全一致，无需复制"})
+		return
+	}
+
+	// 作用域校验：来源与目标都必须在用户权限范围内（非 admin 按数据库当前作用域判定）
+	if !middleware.CheckUserScope(c, payload.From.School, payload.From.Grade, fromClass) ||
+		!middleware.CheckUserScope(c, payload.To.School, payload.To.Grade, toClass) {
 		return
 	}
 

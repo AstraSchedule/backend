@@ -2,6 +2,7 @@ package web
 
 import (
 	"AstraScheduleServerGo/db"
+	"AstraScheduleServerGo/middleware"
 	"AstraScheduleServerGo/model/dbTable"
 	"AstraScheduleServerGo/service"
 	"crypto/sha256"
@@ -147,6 +148,12 @@ func PutCountdownRule(c *gin.Context) {
 		return
 	}
 	scope := parseScopeInput(payload.Scope)
+	// 作用域校验：同 autorun——非 admin 用户不能写超出自身 scope 的规则（含 ALL）
+	for _, s := range scope {
+		if !middleware.CheckUserScopeString(c, s) {
+			return
+		}
+	}
 	schedules := normalizeCountdownSchedules(payload.Schedules)
 	if len(schedules) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "schedules 不能为空，且每项需要合法 name/date(YYYY-MM-DD)"})

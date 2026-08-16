@@ -74,7 +74,7 @@ func buildRouter() *gin.Engine {
 	})
 
 	// 完整更新课表（需 JWT + 密码验证）
-	secureWrite.PUT("/:school/:grade/:class", client.PutSchedule)
+	secureWrite.PUT("/:school/:grade/:class", middleware.RequireScope(), client.PutSchedule)
 	// 获取完整课表
 	router.GET("/:school/:grade/:class", client.GetSchedule)
 	// 通过省份和城市查询天气
@@ -100,26 +100,26 @@ func buildRouter() *gin.Engine {
 
 	// 学校/年级/班级管理
 	secureWrite.POST("/web/schools", web.CreateSchool)
-	secureWrite.DELETE("/web/schools/:school", web.DeleteSchool)
+	secureWrite.DELETE("/web/schools/:school", middleware.RequireScope(), web.DeleteSchool)
 	secureWrite.POST("/web/schools/:school/grades", web.CreateGrade)
-	secureWrite.DELETE("/web/schools/:school/grades/:grade", web.DeleteGrade)
+	secureWrite.DELETE("/web/schools/:school/grades/:grade", middleware.RequireScope(), web.DeleteGrade)
 	secureWrite.POST("/web/schools/:school/grades/:grade/classes", web.CreateClass)
-	secureWrite.DELETE("/web/schools/:school/grades/:grade/classes/:class_number", web.DeleteClass)
+	secureWrite.DELETE("/web/schools/:school/grades/:grade/classes/:class_number", middleware.RequireScope(), web.DeleteClass)
 
 	// 配置接口
 	router.GET("/web/config/:school/:grade/subjects/options", web.GetSubjectsOptions)
 	router.GET("/web/config/:school/:grade/subjects", web.GetSubjects)
-	secureWrite.PUT("/web/config/:school/:grade/subjects", web.PutSubjects)
+	secureWrite.PUT("/web/config/:school/:grade/subjects", middleware.RequireScope(), web.PutSubjects)
 
 	router.GET("/web/config/:school/:grade/timetable/options", web.GetTimetableOptions)
 	router.GET("/web/config/:school/:grade/timetable", web.GetTimetable)
-	secureWrite.PUT("/web/config/:school/:grade/timetable", web.PutTimetable)
+	secureWrite.PUT("/web/config/:school/:grade/timetable", middleware.RequireScope(), web.PutTimetable)
 
 	router.GET("/web/config/:school/:grade/:class_number/schedule", web.GetScheduleConfig)
-	secureWrite.PUT("/web/config/:school/:grade/:class_number/schedule", web.PutScheduleConfig)
+	secureWrite.PUT("/web/config/:school/:grade/:class_number/schedule", middleware.RequireScope(), web.PutScheduleConfig)
 
 	router.GET("/web/config/:school/:grade/:class_number/settings", web.GetSettings)
-	secureWrite.PUT("/web/config/:school/:grade/:class_number/settings", web.PutSettings)
+	secureWrite.PUT("/web/config/:school/:grade/:class_number/settings", middleware.RequireScope(), web.PutSettings)
 	secureWrite.POST("/web/config/copy", web.CopyConfig)
 
 	// 自动任务

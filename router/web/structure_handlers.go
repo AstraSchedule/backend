@@ -2,6 +2,7 @@ package web
 
 import (
 	"AstraScheduleServerGo/db"
+	"AstraScheduleServerGo/middleware"
 	"AstraScheduleServerGo/model/dbTable"
 	"net/http"
 	"strings"
@@ -27,6 +28,11 @@ func CreateSchool(c *gin.Context) {
 		return
 	}
 	if rejectReservedSchoolName(c, req.Name) {
+		return
+	}
+
+	// 作用域校验：非 admin 用户只能创建自身 scope 对应的学校（按数据库当前作用域判定）
+	if !middleware.CheckUserScope(c, req.Name, "", "") {
 		return
 	}
 
@@ -173,6 +179,11 @@ func CreateGrade(c *gin.Context) {
 		return
 	}
 
+	// 作用域校验：非 admin 用户只能创建自身 scope 内的年级
+	if !middleware.CheckUserScope(c, school, req.Name, "") {
+		return
+	}
+
 	// 年级是否存在以默认科目/作息行判断（学校与年级本身没有独立表行，
 	// 按 Schedule 行判断会在“年级尚无班级”时漏判，导致重复创建返回 200）
 	var count int64
@@ -282,6 +293,11 @@ func CreateClass(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "班级名称不能为空"})
+		return
+	}
+
+	// 作用域校验：非 admin 用户只能创建自身 scope 内的班级
+	if !middleware.CheckUserScope(c, school, grade, req.Name) {
 		return
 	}
 

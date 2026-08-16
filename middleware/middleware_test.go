@@ -30,11 +30,16 @@ func setupMwEnv(t *testing.T) {
 }
 
 func createMwUser(t *testing.T, username, password, role string) *dbTable.User {
+	return createMwUserScoped(t, username, password, role, "ALL")
+}
+
+// createMwUserScoped 创建指定角色与作用域的测试用户
+func createMwUserScoped(t *testing.T, username, password, role, scope string) *dbTable.User {
 	t.Helper()
 	hash, err := service.HashPassword(password)
 	require.NoError(t, err)
 	require.NoError(t, db.GetDB().Where("username = ?", username).Delete(&dbTable.User{}).Error)
-	user := &dbTable.User{Username: username, PasswordHash: hash, Role: role, Scope: "ALL"}
+	user := &dbTable.User{Username: username, PasswordHash: hash, Role: role, Scope: scope}
 	require.NoError(t, db.GetDB().Create(user).Error)
 	return user
 }
@@ -306,4 +311,78 @@ func TestLoginLimiter_LocksAfterMaxFailures(t *testing.T) {
 	// 重置后恢复
 	limiter.Reset("127.0.0.1", "user")
 	assert.True(t, limiter.Allow("127.0.0.1", "user"))
+}
+
+// RequireScope
+
+func TestRequireScope_ScopeMatrix(t *testing.T) {
+	setupMwEnv(t)
+	build := func(role, scope, school, grade, class string) int {
+		user := createMwUserScoped(t, "scopemx", "test123", role, scope)
+		token := mwToken(t, user)
+		router := gin.New()
+		router.PUT("/t/:school/:grade/:class_number", JWTAuthMiddleware(), RequireScope(), func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"ok": true})
+		})
+		w := doMwRequest(router, "PUT", "/t/"+school+"/"+grade+"/"+class, "{}", map[string]string{
+			"Authorization": "Bearer " + token,
+		})
+		return w.Code
+	}
+	cases := []struct {
+		name, role, scope, school, grade, class string
+		want                                    int
+	}{
+		{"admin 全通", "admin", "ALL", "s1", "g1", "c1", http.StatusOK},
+		{"school_w 本校任意年级班级放行", "school_w", "s1", "s1", "g9", "c9", http.StatusOK},
+		{"school_w 他校拒绝", "school_w", "s1", "s2", "g1", "c1", http.StatusForbidden},
+		{"grade_w 本年级任意班级放行", "grade_w", "s1/g1", "s1", "g1", "c9", http.StatusOK},
+		{"grade_w 他年级拒绝", "grade_w", "s1/g1", "s1", "g2", "c1", http.StatusForbidden},
+		{"class_w 本班放行", "class_w", "s1/g1/c1", "s1", "g1", "c1", http.StatusOK},
+		{"class_w 他班拒绝", "class_w", "s1/g1/c1", "s1", "g1", "c2", http.StatusForbidden},
+		{"readonly 拒绝", "readonly", "s1", "s1", "g1", "c1", http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, build(tc.role, tc.scope, tc.school, tc.grade, tc.class))
+		})
+	}
+}
+
+func TestRequireScope_ClassParamFallback(t *testing.T) {
+	setupMwEnv(t)
+	user := createMwUserScoped(t, "scopefb", "test123", "class_w", "s1/g1/c1")
+	token := mwToken(t, user)
+
+	// 客户端路由使用 :class 参数名，RequireScope 需兼容两种参数名，防止漏检
+	router := gin.New()
+	router.PUT("/t/:school/:grade/:class", JWTAuthMiddleware(), RequireScope(), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	w := doMwRequest(router, "PUT", "/t/s1/g1/c1", "{}", map[string]string{"Authorization": "Bearer " + token})
+	assert.Equal(t, http.StatusOK, w.Code)
+	w = doMwRequest(router, "PUT", "/t/s1/g1/c2", "{}", map[string]string{"Authorization": "Bearer " + token})
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestRequireScope_DowngradedUserForbidden(t *testing.T) {
+	setupMwEnv(t)
+	user := createMwUserScoped(t, "scopedg", "test123", "admin", "ALL")
+	token := mwToken(t, user)
+
+	// 用户被收窄为 class_w(s1/g1/c1) 后，旧 token 内嵌 admin/ALL，仍必须按数据库当前值拒绝越界写
+	require.NoError(t, db.GetDB().Model(user).Updates(map[string]interface{}{
+		"role": "class_w", "scope": "s1/g1/c1",
+	}).Error)
+
+	router := gin.New()
+	router.PUT("/t/:school/:grade/:class_number", JWTAuthMiddleware(), RequireScope(), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	w := doMwRequest(router, "PUT", "/t/s1/g1/c2", "{}", map[string]string{"Authorization": "Bearer " + token})
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	w = doMwRequest(router, "PUT", "/t/s1/g1/c1", "{}", map[string]string{"Authorization": "Bearer " + token})
+	assert.Equal(t, http.StatusOK, w.Code)
 }

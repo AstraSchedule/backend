@@ -2,6 +2,7 @@ package web
 
 import (
 	"AstraScheduleServerGo/db"
+	"AstraScheduleServerGo/middleware"
 	"AstraScheduleServerGo/model/dbTable"
 	"net/http"
 	"strconv"
@@ -33,6 +34,13 @@ func validateDateField(c *gin.Context, fieldName string, value string) bool {
 
 func persistAutorunRule(c *gin.Context, payload autorunPayload, params map[string]interface{}, hashID string) {
 	scope := parseScopeInput(payload.Scope)
+	// 作用域校验：非 admin 用户规则范围不能超出自身 scope（按数据库当前角色与作用域判定）；
+	// ALL 级规则仅 admin 可写，防止校/级/班写角色越权下发全局规则
+	for _, s := range scope {
+		if !middleware.CheckUserScopeString(c, s) {
+			return
+		}
+	}
 	if hashID == "" {
 		hashID = makeHashID(payload.Type, scope, payload.Priority, params)
 	}
