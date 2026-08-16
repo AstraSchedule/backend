@@ -381,6 +381,9 @@ func TestRouteTable_StructureCRUDFlow(t *testing.T) {
 	// 空名称 -> 400
 	w = contractRequest(t, router, "POST", "/web/schools", map[string]string{"name": ""}, h)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	// 年级名含作用域分隔符 -> 400（防止破坏作用域前缀匹配导致误删）
+	w = contractRequest(t, router, "POST", "/web/schools/测试学校/grades", map[string]string{"name": "2026/1"}, h)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	// 创建年级：应同时生成默认科目与两个默认作息表
 	w = contractRequest(t, router, "POST", "/web/schools/测试学校/grades", map[string]string{"name": "2026"}, h)
@@ -401,6 +404,10 @@ func TestRouteTable_StructureCRUDFlow(t *testing.T) {
 	// 学校已有关联数据（默认科目/作息）时重复创建同名学校 -> 409
 	w = contractRequest(t, router, "POST", "/web/schools", map[string]string{"name": "测试学校"}, h)
 	assert.Equal(t, http.StatusConflict, w.Code)
+
+	// 班级名含作用域分隔符 -> 400（防止破坏作用域前缀匹配导致误删）
+	w = contractRequest(t, router, "POST", "/web/schools/测试学校/grades/2026/classes", map[string]string{"name": "1/2"}, h)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	// 创建班级：应生成默认课表与客户端配置
 	w = contractRequest(t, router, "POST", "/web/schools/测试学校/grades/2026/classes", map[string]string{"name": "1"}, h)
