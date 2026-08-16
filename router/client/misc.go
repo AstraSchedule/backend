@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -21,6 +22,9 @@ type wsScope struct {
 type wsHub struct {
 	mu      sync.RWMutex
 	clients map[wsScope]map[*websocket.Conn]string // conn -> classNumber
+	// 每个连接一把写锁：gorilla/websocket 不允许并发调用写方法，
+	// 并发广播必须逐连接串行化，否则会 panic("concurrent write to websocket connection")
+	writeLocks sync.Map // *websocket.Conn -> *sync.Mutex
 }
 
 var clientWsHub = &wsHub{
@@ -118,6 +122,9 @@ func (h *wsHub) onlineClasses(namespace string) map[string]bool {
 	return out
 }
 
+// wsWriteTimeout 单条 WebSocket 消息的写入截止时间，防止慢客户端拖垮广播（进而阻塞写接口响应）
+const wsWriteTimeout = 5 * time.Second
+
 func (h *wsHub) broadcast(scope wsScope, message string) int {
 	conns := h.snapshot(scope)
 	if len(conns) == 0 {
@@ -125,7 +132,14 @@ func (h *wsHub) broadcast(scope wsScope, message string) int {
 	}
 	sent := 0
 	for _, conn := range conns {
-		if err := conn.WriteMessage(websocket.TextMessage, []byte(message)); err != nil {
+		lockVal, _ := h.writeLocks.LoadOrStore(conn, &sync.Mutex{})
+		lock := lockVal.(*sync.Mutex)
+		lock.Lock()
+		_ = conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+		err := conn.WriteMessage(websocket.TextMessage, []byte(message))
+		_ = conn.SetWriteDeadline(time.Time{})
+		lock.Unlock()
+		if err != nil {
 			logrus.Warnf("WebSocket 广播失败，将移除连接：scope=%s/%s err=%v", scope.School, scope.Grade, err)
 			h.remove(scope, conn)
 			_ = conn.Close()

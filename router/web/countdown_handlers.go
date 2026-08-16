@@ -157,6 +157,11 @@ func PutCountdownRule(c *gin.Context) {
 	if recordID == "" {
 		recordID = makeCountdownID(scope, schedules)
 	}
+	// 更新前取回旧作用域：scope 变更时，旧作用域的客户端同样需要刷新通知
+	var oldScopes []string
+	if rows, err := db.FetchCountdownRecords(recordID); err == nil && len(rows) > 0 {
+		oldScopes = rows[0].Scope
+	}
 	record := dbTable.CountdownRecord{
 		ID:        recordID,
 		Scope:     scope,
@@ -166,8 +171,8 @@ func PutCountdownRule(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	// 倒数日变更影响客户端倒数日展示，按作用域广播刷新
-	broadcastScopes(scope)
+	// 倒数日变更影响客户端倒数日展示，按新旧作用域并集广播刷新
+	broadcastScopes(mergeScopes(oldScopes, scope))
 	c.JSON(http.StatusOK, gin.H{"status": 200, "id": recordID})
 }
 

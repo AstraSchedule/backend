@@ -141,3 +141,13 @@ func TestServiceAsInt(t *testing.T) {
 	val, ok = serviceAsInt(nil)
 	assert.False(t, ok)
 }
+
+func TestMergeScopes_UnionDedupe(t *testing.T) {
+	got := mergeScopes([]string{"s1/g1", "ALL"}, []string{"ALL", "s2/g2", " s1/g1 "})
+	assert.Equal(t, []string{"s1/g1", "ALL", "s2/g2"}, got)
+}
+
+func TestMergeScopes_EmptyOld(t *testing.T) {
+	assert.Equal(t, []string{"s1"}, mergeScopes(nil, []string{"s1"}))
+	assert.Empty(t, mergeScopes(nil, nil))
+}
