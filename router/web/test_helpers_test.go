@@ -21,7 +21,7 @@ import (
 // handler 级测试不挂完整认证中间件，直接挂本中间件补上下文，供 handler 内的作用域校验（CheckUserScope*）使用。
 func adminOnly(t *testing.T) gin.HandlerFunc {
 	t.Helper()
-	user := testutil.CreateUser(t, db.GetDB(), "mw-web-admin", "test123", "admin", "ALL")
+	user := testutil.CreateUser(t, db.GetDB(), "default", "mw-web-admin", "test123", "admin", "ALL")
 	claims := &service.JWTClaims{UserID: user.ID, Namespace: "default", Username: user.Username, Role: user.Role, Scope: user.Scope}
 	return func(c *gin.Context) {
 		c.Set(middleware.UserClaimsKey, claims)

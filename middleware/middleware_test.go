@@ -35,7 +35,7 @@ func createMwUser(t *testing.T, username, password, role string) *dbTable.User {
 
 // createMwUserScoped 创建指定角色与作用域的测试用户（复用 testutil.CreateUser 避免重复样板）
 func createMwUserScoped(t *testing.T, username, password, role, scope string) *dbTable.User {
-	return testutil.CreateUser(t, db.GetDB(), username, password, role, scope)
+	return testutil.CreateUser(t, db.GetDB(), "default", username, password, role, scope)
 }
 
 func mwToken(t *testing.T, user *dbTable.User) string {
@@ -405,4 +405,19 @@ func TestCheckUserScopeString_NonAdminALLForbidden(t *testing.T) {
 	c2, _ := gin.CreateTestContext(w2)
 	c2.Set(UserClaimsKey, adminClaims)
 	assert.True(t, CheckUserScopeString(c2, "ALL"))
+}
+
+func TestCheckUserScopeString_TooManySegmentsRejected(t *testing.T) {
+	setupMwEnv(t)
+	admin := createMwUserScoped(t, "scopewseg", "test123", "admin", "ALL")
+	token := mwToken(t, admin)
+	claims, err := service.ParseToken(model.Configs.Secret.Token, token)
+	require.NoError(t, err)
+
+	// 超过三段的作用域串必须拒绝，防止截断校验后把死数据写入 Scope 字段
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set(UserClaimsKey, claims)
+	assert.False(t, CheckUserScopeString(c, "s1/g1/c1/extra"))
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

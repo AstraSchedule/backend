@@ -14,15 +14,16 @@ import (
 	gormsqlite "github.com/libtnb/sqlite"
 )
 
-// CreateUser 在指定连接上创建指定角色与作用域的测试用户（密码哈希化，先删同名旧用户）。
+// CreateUser 在指定连接上创建指定租户/角色/作用域的测试用户（密码哈希化，先删同租户同名旧用户）。
 // 供多个测试包共享，避免重复的用户创建样板被 SonarQube 计入新代码重复率。
 // 连接由调用方传入（testutil 不能 import db：db 包自身测试依赖 testutil，会造成导入环）。
-func CreateUser(t *testing.T, conn *gorm.DB, username, password, role, scope string) *dbTable.User {
+// saas 的 User 唯一键为 (namespace, username)，删除与创建都必须限定 namespace，防止误删跨租户同名用户。
+func CreateUser(t *testing.T, conn *gorm.DB, namespace, username, password, role, scope string) *dbTable.User {
 	t.Helper()
 	hash, err := service.HashPassword(password)
 	require.NoError(t, err)
-	require.NoError(t, conn.Where("username = ?", username).Delete(&dbTable.User{}).Error)
-	user := &dbTable.User{Username: username, PasswordHash: hash, Role: role, Scope: scope}
+	require.NoError(t, conn.Where("namespace = ? AND username = ?", namespace, username).Delete(&dbTable.User{}).Error)
+	user := &dbTable.User{Namespace: namespace, Username: username, PasswordHash: hash, Role: role, Scope: scope}
 	require.NoError(t, conn.Create(user).Error)
 	return user
 }
