@@ -366,13 +366,16 @@ func TestRouteTable_StructureDeleteRemovesAutorunRules(t *testing.T) {
 	w = contractRequest(t, router, "POST", "/web/schools/清理测试/grades/2026/classes", map[string]string{"name": "1"}, h)
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	// 造不同作用域的规则（含无关作用域与 ALL 全局规则）
-	seedRule := func(id, scope string) {
-		assert.NoError(t, db.GetDB().Save(&dbTable.AutorunRecord{
-			HashID: id, EType: dbTable.AutorunTypeSchedule, Scope: []string{scope},
+	// 造不同作用域的规则（含无关作用域与 ALL 全局规则）；newRule 统一构造，避免重复字面量
+	newRule := func(id string, scopes ...string) *dbTable.AutorunRecord {
+		return &dbTable.AutorunRecord{
+			HashID: id, EType: dbTable.AutorunTypeSchedule, Scope: scopes,
 			Parameters: map[string]interface{}{"rule": map[string]interface{}{"date": "2025-10-13", "schedule": map[string]interface{}{"periods": []interface{}{}}}},
 			Level: 1,
-		}).Error)
+		}
+	}
+	seedRule := func(id string, scopes ...string) {
+		assert.NoError(t, db.GetDB().Save(newRule(id, scopes...)).Error)
 	}
 	seedRule("r-school", "清理测试")
 	seedRule("r-grade", "清理测试/2026")
@@ -381,11 +384,7 @@ func TestRouteTable_StructureDeleteRemovesAutorunRules(t *testing.T) {
 	seedRule("r-all", "ALL")
 
 	// 多作用域记录：删除匹配作用域时必须保留无关作用域
-	assert.NoError(t, db.GetDB().Save(&dbTable.AutorunRecord{
-		HashID: "r-multi", EType: dbTable.AutorunTypeSchedule, Scope: []string{"清理测试/2026/2", "别处/2026/2"},
-		Parameters: map[string]interface{}{"rule": map[string]interface{}{"date": "2025-10-13", "schedule": map[string]interface{}{"periods": []interface{}{}}}},
-		Level:     1,
-	}).Error)
+	assert.NoError(t, db.GetDB().Save(newRule("r-multi", "清理测试/2026/2", "别处/2026/2")).Error)
 
 	ruleExists := func(id string) bool {
 		rows, err := db.FetchAutorunRecords(id)
@@ -398,18 +397,21 @@ func TestRouteTable_StructureDeleteRemovesAutorunRules(t *testing.T) {
 		require.Len(t, rows, 1, "规则应存在: "+id)
 		return rows[0].Scope
 	}
+	deleteOK := func(path string) {
+		t.Helper()
+		w := contractRequest(t, router, "DELETE", path, nil, h)
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
 
 	// 删班级：只清理班级级规则
-	w = contractRequest(t, router, "DELETE", "/web/schools/清理测试/grades/2026/classes/1", nil, h)
-	assert.Equal(t, http.StatusOK, w.Code)
+	deleteOK("/web/schools/清理测试/grades/2026/classes/1")
 	assert.False(t, ruleExists("r-class"), "班级级规则应随班级删除")
 	assert.True(t, ruleExists("r-grade"), "年级级规则不应被班级删除影响")
 
 	// 重建班级级规则后删年级：删除时下级规则仍存在，年级与班级级规则必须一并清理
 	//（仅匹配自身前缀的实现会漏删班级级规则，本断言可拦截）
 	seedRule("r-class", "清理测试/2026/1")
-	w = contractRequest(t, router, "DELETE", "/web/schools/清理测试/grades/2026", nil, h)
-	assert.Equal(t, http.StatusOK, w.Code)
+	deleteOK("/web/schools/清理测试/grades/2026")
 	assert.False(t, ruleExists("r-grade"), "年级级规则应随年级删除")
 	assert.False(t, ruleExists("r-class"), "班级级规则应随年级级联删除")
 	assert.True(t, ruleExists("r-school"), "学校级规则不应被年级删除影响")
@@ -418,8 +420,7 @@ func TestRouteTable_StructureDeleteRemovesAutorunRules(t *testing.T) {
 	// 重建年级与班级规则后删学校：学校/年级/班级三级规则一并清理，无关与 ALL 规则保留
 	seedRule("r-grade", "清理测试/2026")
 	seedRule("r-class", "清理测试/2026/1")
-	w = contractRequest(t, router, "DELETE", "/web/schools/清理测试", nil, h)
-	assert.Equal(t, http.StatusOK, w.Code)
+	deleteOK("/web/schools/清理测试")
 	assert.False(t, ruleExists("r-school"), "学校级规则应随学校删除")
 	assert.False(t, ruleExists("r-grade"), "年级级规则应随学校级联删除")
 	assert.False(t, ruleExists("r-class"), "班级级规则应随学校级联删除")
