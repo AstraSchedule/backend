@@ -439,3 +439,21 @@ func TestCheckUserScopeString_ALLPrefixedVariantsRejected(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	}
 }
+
+func TestCheckUserScopeString_EmptySegmentsRejected(t *testing.T) {
+	setupMwEnv(t)
+	admin := createMwUserScoped(t, "scopewempty", "test123", "admin", "ALL")
+	token := mwToken(t, admin)
+	claims, err := service.ParseToken(model.Configs.Secret.Token, token)
+	require.NoError(t, err)
+
+	// 任一分段为空的作用域串（尾随/连续分隔符）必须拒绝：
+	// 按父级授权的角色会放行并原样入库，形成无法稳定匹配的死数据
+	for _, variant := range []string{"s1/", "s1/g1/", "s1//c1"} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Set(UserClaimsKey, claims)
+		assert.False(t, CheckUserScopeString(c, variant), "应拒绝空分段: "+variant)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	}
+}
