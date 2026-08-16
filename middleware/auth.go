@@ -71,14 +71,23 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 	}
 }
 
-// AdminOrToken 密码验证可操作
-// 需要 JWT + 请求头 X-Verify-Password 匹配用户密码
-func AdminOrToken() gin.HandlerFunc {
+// JWTAndPassword 写接口认证：需要有效 JWT + 请求头 X-Verify-Password（或请求体 password）
+// 匹配该 JWT 用户自己的密码。只读用户（readonly）禁止写操作。
+// 历史遗留说明：原函数名 AdminOrToken 暗示"管理员或令牌二选一"，但万能密码早在
+// 多用户 JWT 改造时已移除，实际语义一直是 JWT + 密码验证，本次改名并补角色校验。
+func JWTAndPassword() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims := parseJWTFromHeader(c)
 
 		if claims == nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"detail": "未认证"})
+			c.Abort()
+			return
+		}
+
+		// 只读用户禁止写操作（此前任何角色只要知道密码都能写）
+		if claims.Role == "readonly" {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "只读用户无写权限"})
 			c.Abort()
 			return
 		}
