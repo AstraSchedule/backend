@@ -226,6 +226,23 @@ func TestRouteTable_AuthMatrix(t *testing.T) {
 		w := contractRequest(t, router, "PUT", "/web/countdown", map[string]interface{}{}, authPwd(readonlyToken, "test123"))
 		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
+	t.Run("readonly 导出备份被拒 403", func(t *testing.T) {
+		// 导出备份虽是 GET，但涉及全量数据下载，走 JWTAndPassword 组：readonly 一律拒绝
+		w := contractRequest(t, router, "GET", "/web/backup/export", nil, auth(readonlyToken))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("降级用户的旧 admin token 被拒", func(t *testing.T) {
+		// admin 被降级为 readonly 后，旧 token 内嵌角色仍为 admin，
+		// 但中间件以数据库当前角色为准：管理接口与写接口都必须拒绝
+		downgradedToken := createContractUser(t, "downgraded1", "test123", "admin")
+		require.NoError(t, db.GetDB().Model(&dbTable.User{}).Where("username = ?", "downgraded1").
+			Update("role", "readonly").Error)
+
+		w := contractRequest(t, router, "GET", "/web/users", nil, auth(downgradedToken))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		w = contractRequest(t, router, "PUT", "/web/countdown", map[string]interface{}{}, authPwd(downgradedToken, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
 	t.Run("写接口缺密码被拒 401", func(t *testing.T) {
 		w := contractRequest(t, router, "PUT", "/web/countdown", map[string]interface{}{}, auth(adminToken))
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
