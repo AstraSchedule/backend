@@ -380,10 +380,23 @@ func TestRouteTable_StructureDeleteRemovesAutorunRules(t *testing.T) {
 	seedRule("r-other", "别处/2026/1")
 	seedRule("r-all", "ALL")
 
+	// 多作用域记录：删除匹配作用域时必须保留无关作用域
+	assert.NoError(t, db.GetDB().Save(&dbTable.AutorunRecord{
+		HashID: "r-multi", EType: dbTable.AutorunTypeSchedule, Scope: []string{"清理测试/2026/2", "别处/2026/2"},
+		Parameters: map[string]interface{}{"rule": map[string]interface{}{"date": "2025-10-13", "schedule": map[string]interface{}{"periods": []interface{}{}}}},
+		Level:     1,
+	}).Error)
+
 	ruleExists := func(id string) bool {
 		rows, err := db.FetchAutorunRecords(id)
 		require.NoError(t, err)
 		return len(rows) == 1
+	}
+	scopeOf := func(id string) []string {
+		rows, err := db.FetchAutorunRecords(id)
+		require.NoError(t, err)
+		require.Len(t, rows, 1, "规则应存在: "+id)
+		return rows[0].Scope
 	}
 
 	// 删班级：只清理班级级规则
@@ -392,18 +405,32 @@ func TestRouteTable_StructureDeleteRemovesAutorunRules(t *testing.T) {
 	assert.False(t, ruleExists("r-class"), "班级级规则应随班级删除")
 	assert.True(t, ruleExists("r-grade"), "年级级规则不应被班级删除影响")
 
-	// 删年级：清理年级级（及以下）规则
+	// 重建班级级规则后删年级：删除时下级规则仍存在，年级与班级级规则必须一并清理
+	//（仅匹配自身前缀的实现会漏删班级级规则，本断言可拦截）
+	seedRule("r-class", "清理测试/2026/1")
 	w = contractRequest(t, router, "DELETE", "/web/schools/清理测试/grades/2026", nil, h)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.False(t, ruleExists("r-grade"), "年级级规则应随年级删除")
+	assert.False(t, ruleExists("r-class"), "班级级规则应随年级级联删除")
 	assert.True(t, ruleExists("r-school"), "学校级规则不应被年级删除影响")
+	assert.Equal(t, []string{"别处/2026/2"}, scopeOf("r-multi"), "多作用域记录应仅移除匹配作用域并保留其余")
 
-	// 删学校：清理学校级（及以下）规则，无关与 ALL 规则保留
+	// 重建年级与班级规则后删学校：学校/年级/班级三级规则一并清理，无关与 ALL 规则保留
+	seedRule("r-grade", "清理测试/2026")
+	seedRule("r-class", "清理测试/2026/1")
 	w = contractRequest(t, router, "DELETE", "/web/schools/清理测试", nil, h)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.False(t, ruleExists("r-school"), "学校级规则应随学校删除")
+	assert.False(t, ruleExists("r-grade"), "年级级规则应随学校级联删除")
+	assert.False(t, ruleExists("r-class"), "班级级规则应随学校级联删除")
 	assert.True(t, ruleExists("r-other"), "无关作用域规则不应受影响")
 	assert.True(t, ruleExists("r-all"), "ALL 全局规则不应受影响")
+	assert.True(t, ruleExists("r-multi"), "多作用域记录的剩余作用域不应受影响")
+
+	// 删除学校保留值 ALL 被拒 400，且全局规则不受影响
+	w = contractRequest(t, router, "DELETE", "/web/schools/ALL", nil, h)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.True(t, ruleExists("r-all"), "删除学校 ALL 不得影响全局规则")
 }
 
 // TestRouteTable_CreateGradeConcurrent 并发创建同名年级：恰好一个成功、一个 409，
