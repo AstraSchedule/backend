@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	dbsvc "AstraScheduleServerGo/db"
 	"AstraScheduleServerGo/model"
 	"AstraScheduleServerGo/model/dbTable"
 
@@ -44,6 +45,19 @@ func InitTestDB() *gorm.DB {
 	})
 	if err != nil {
 		panic("testutil: failed to open sqlite memory db: " + err.Error())
+	}
+	// SQLite :memory: 每个连接是独立空库；锁为单连接，保证并发测试共享同一套表与数据
+	sqlDB, err := db.DB()
+	if err != nil {
+		panic("testutil: failed to get underlying sql db: " + err.Error())
+	}
+	sqlDB.SetMaxOpenConns(1)
+	// 业务代码统一走 db.GetDB() 全局单例（connect.go 自己开了一个 :memory: 连接池），
+	// 同样锁为单连接，否则并发测试会拿到各自独立的空内存库（no such table）
+	if globalDB := dbsvc.GetDB(); globalDB != nil {
+		if globalSQLDB, err := globalDB.DB(); err == nil {
+			globalSQLDB.SetMaxOpenConns(1)
+		}
 	}
 	if err := db.AutoMigrate(
 		&dbTable.Schedule{},

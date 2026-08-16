@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"AstraScheduleServerGo/db"
@@ -317,6 +318,44 @@ func TestRouteTable_StructureCRUDFlow(t *testing.T) {
 	assert.Error(t, db.GetDB().Where("school = ? AND grade = ?", "测试学校", "2026").First(&dbTable.Subject{}).Error)
 	w = contractRequest(t, router, "DELETE", "/web/schools/测试学校", nil, h)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestRouteTable_CreateGradeConcurrent 并发创建同名年级：恰好一个成功、一个 409，
+// 防止预检查竞态导致两个请求都返回 200。
+func TestRouteTable_CreateGradeConcurrent(t *testing.T) {
+	router := setupContractEnv(t)
+	token := createContractUser(t, "admin-grade-race", "test123", "admin")
+
+	const workers = 2
+	var wg sync.WaitGroup
+	codes := make([]int, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			payload := `{"name":"2026"}`
+			req, _ := http.NewRequest("POST", "/web/schools/race-school/grades", strings.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("X-Verify-Password", "test123")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			codes[idx] = w.Code
+		}(i)
+	}
+	wg.Wait()
+
+	oks, conflicts := 0, 0
+	for _, code := range codes {
+		switch code {
+		case http.StatusOK:
+			oks++
+		case http.StatusConflict:
+			conflicts++
+		}
+	}
+	require.Equal(t, 1, oks, "并发重复创建年级应恰好一个成功，codes=%v", codes)
+	require.Equal(t, 1, conflicts, "并发重复创建年级应恰好一个 409，codes=%v", codes)
 }
 
 // TestRouteTable_ClientPutScheduleFlow 走真实路由验证客户端课表写入（PUT /:school/:grade/:class）。
