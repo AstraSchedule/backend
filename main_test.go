@@ -351,6 +351,95 @@ func TestRouteTable_StructureCRUDFlow(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+// TestRouteTable_StructureDeleteRemovesAutorunRules 级联删除结构时应同步清理作用域匹配的自动任务规则，
+// 且不影响其它作用域与 ALL 全局规则。
+func TestRouteTable_StructureDeleteRemovesAutorunRules(t *testing.T) {
+	router := setupContractEnv(t)
+	token := createContractUser(t, "admin-del-rule", "test123", "admin")
+	h := map[string]string{"Authorization": "Bearer " + token, "X-Verify-Password": "test123"}
+
+	// 创建学校/年级/班级
+	w := contractRequest(t, router, "POST", "/web/schools", map[string]string{"name": "清理测试"}, h)
+	assert.Equal(t, http.StatusOK, w.Code)
+	w = contractRequest(t, router, "POST", "/web/schools/清理测试/grades", map[string]string{"name": "2026"}, h)
+	assert.Equal(t, http.StatusOK, w.Code)
+	w = contractRequest(t, router, "POST", "/web/schools/清理测试/grades/2026/classes", map[string]string{"name": "1"}, h)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 造不同作用域的规则（含无关作用域与 ALL 全局规则）；newRule 统一构造，避免重复字面量。
+	// 待生效/生效中规则用未来日期，过期规则单独构造（验证过期规则不随结构删除清理）
+	newRule := func(id, date string, scopes ...string) *dbTable.AutorunRecord {
+		return &dbTable.AutorunRecord{
+			HashID: id, EType: dbTable.AutorunTypeSchedule, Scope: scopes,
+			Parameters: map[string]interface{}{"rule": map[string]interface{}{"date": date, "schedule": map[string]interface{}{"periods": []interface{}{}}}},
+			Level: 1,
+		}
+	}
+	seedRule := func(id, date string, scopes ...string) {
+		assert.NoError(t, db.GetDB().Save(newRule(id, date, scopes...)).Error)
+	}
+	seedRule("r-school", "2099-01-01", "清理测试")
+	seedRule("r-grade", "2099-01-01", "清理测试/2026")
+	seedRule("r-class", "2099-01-01", "清理测试/2026/1")
+	seedRule("r-other", "2099-01-01", "别处/2026/1")
+	seedRule("r-all", "2099-01-01", "ALL")
+	// 已过期规则（status=2）由 SQL 过滤：不随结构删除清理，历史数据保留
+	expired := newRule("r-expired", "2020-01-01", "清理测试/2026/1")
+	expired.Status = 2
+	assert.NoError(t, db.GetDB().Save(expired).Error)
+
+	// 多作用域记录：删除匹配作用域时必须保留无关作用域
+	assert.NoError(t, db.GetDB().Save(newRule("r-multi", "2099-01-01", "清理测试/2026/2", "别处/2026/2")).Error)
+
+	ruleExists := func(id string) bool {
+		rows, err := db.FetchAutorunRecords(id)
+		require.NoError(t, err)
+		return len(rows) == 1
+	}
+	scopeOf := func(id string) []string {
+		rows, err := db.FetchAutorunRecords(id)
+		require.NoError(t, err)
+		require.Len(t, rows, 1, "规则应存在: "+id)
+		return rows[0].Scope
+	}
+	deleteOK := func(path string) {
+		t.Helper()
+		w := contractRequest(t, router, "DELETE", path, nil, h)
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
+
+	// 删班级：只清理班级级规则
+	deleteOK("/web/schools/清理测试/grades/2026/classes/1")
+	assert.False(t, ruleExists("r-class"), "班级级规则应随班级删除")
+	assert.True(t, ruleExists("r-grade"), "年级级规则不应被班级删除影响")
+
+	// 重建班级级规则后删年级：删除时下级规则仍存在，年级与班级级规则必须一并清理
+	//（仅匹配自身前缀的实现会漏删班级级规则，本断言可拦截）
+	seedRule("r-class", "2099-01-01", "清理测试/2026/1")
+	deleteOK("/web/schools/清理测试/grades/2026")
+	assert.False(t, ruleExists("r-grade"), "年级级规则应随年级删除")
+	assert.False(t, ruleExists("r-class"), "班级级规则应随年级级联删除")
+	assert.True(t, ruleExists("r-school"), "学校级规则不应被年级删除影响")
+	assert.Equal(t, []string{"别处/2026/2"}, scopeOf("r-multi"), "多作用域记录应仅移除匹配作用域并保留其余")
+
+	// 重建年级与班级规则后删学校：学校/年级/班级三级规则一并清理，无关与 ALL 规则保留
+	seedRule("r-grade", "2099-01-01", "清理测试/2026")
+	seedRule("r-class", "2099-01-01", "清理测试/2026/1")
+	deleteOK("/web/schools/清理测试")
+	assert.False(t, ruleExists("r-school"), "学校级规则应随学校删除")
+	assert.False(t, ruleExists("r-grade"), "年级级规则应随学校级联删除")
+	assert.False(t, ruleExists("r-class"), "班级级规则应随学校级联删除")
+	assert.True(t, ruleExists("r-other"), "无关作用域规则不应受影响")
+	assert.True(t, ruleExists("r-all"), "ALL 全局规则不应受影响")
+	assert.True(t, ruleExists("r-multi"), "多作用域记录的剩余作用域不应受影响")
+	assert.True(t, ruleExists("r-expired"), "已过期规则不再生效，不随结构删除清理")
+
+	// 删除学校保留值 ALL 被拒 400，且全局规则不受影响
+	w = contractRequest(t, router, "DELETE", "/web/schools/ALL", nil, h)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.True(t, ruleExists("r-all"), "删除学校 ALL 不得影响全局规则")
+}
+
 // TestRouteTable_CreateGradeConcurrent 并发创建同名年级：恰好一个成功、一个 409，
 // 防止预检查竞态导致两个请求都返回 200。
 func TestRouteTable_CreateGradeConcurrent(t *testing.T) {
