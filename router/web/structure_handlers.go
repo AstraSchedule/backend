@@ -38,6 +38,8 @@ func CreateSchool(c *gin.Context) {
 		return
 	}
 
+	// 学校本身没有持久化表行（存在性由科目行推导），此处无数据写入，
+	// 因此不广播：客户端没有任何需要刷新的数据变更
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "学校创建成功"})
 }
 
@@ -62,6 +64,7 @@ func DeleteSchool(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	broadcastScopes([]string{school})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "学校已删除"})
 }
 
@@ -140,6 +143,8 @@ func CreateGrade(c *gin.Context) {
 		return
 	}
 
+	// 年级创建生成默认科目/作息，广播该年级客户端刷新
+	broadcastScopes([]string{school + "/" + req.Name})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "年级创建成功"})
 }
 
@@ -161,6 +166,7 @@ func DeleteGrade(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	broadcastScopes([]string{school + "/" + grade})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "年级已删除"})
 }
 
@@ -176,7 +182,11 @@ func CreateClass(c *gin.Context) {
 	}
 
 	var count int64
-	db.GetDB().Model(&dbTable.Schedule{}).Where(whereSchoolGradeClass, school, grade, req.Name).Count(&count)
+	countRes := db.GetDB().Model(&dbTable.Schedule{}).Where(whereSchoolGradeClass, school, grade, req.Name).Count(&count)
+	if countRes.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": countRes.Error.Error()})
+		return
+	}
 	if count > 0 {
 		c.JSON(http.StatusConflict, gin.H{"detail": "班级已存在"})
 		return
@@ -196,7 +206,16 @@ func CreateClass(c *gin.Context) {
 			{Chinese: "六", English: "SAT", Timetable: "没课", ClassList: dbTable.ClassList{[]string{"课"}}},
 		},
 	}
-	db.GetDB().Clauses(clause.OnConflict{DoNothing: true}).Create(&schedule)
+	// 事务内原子创建默认课表与客户端配置，任一失败回滚
+	tx := db.GetDB().Begin()
+	defer func() { if recover() != nil { tx.Rollback() } }()
+
+	scheduleRes := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&schedule)
+	if scheduleRes.Error != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": scheduleRes.Error.Error()})
+		return
+	}
 
 	// 创建默认客户端配置（含 CSS 变量）
 	clientConfig := dbTable.ClientConfig{
@@ -238,8 +257,19 @@ func CreateClass(c *gin.Context) {
 			StartupBehavior: "normal",
 		},
 	}
-	db.GetDB().Clauses(clause.OnConflict{DoNothing: true}).Create(&clientConfig)
+	configRes := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&clientConfig)
+	if configRes.Error != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": configRes.Error.Error()})
+		return
+	}
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
+	// 班级创建生成默认课表与客户端配置，提交成功后才广播该年级客户端刷新
+	broadcastScopes([]string{school + "/" + grade})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "班级创建成功"})
 }
 
@@ -259,5 +289,6 @@ func DeleteClass(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	broadcastScopes([]string{school + "/" + grade})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "班级已删除"})
 }

@@ -111,7 +111,7 @@ func TestRouteTable_AnonymousMatrix(t *testing.T) {
 		{"根路由", "GET", "/", nil, http.StatusOK},
 		{"客户端课表读取", "GET", "/s1/g1/c1", nil, http.StatusOK},
 		{"客户端课表写入需认证", "PUT", "/s1/g1/c1", nil, http.StatusUnauthorized},
-		{"广播需认证", "POST", "/api/broadcast/s1/g1/c1", nil, http.StatusUnauthorized},
+		{"外部广播入口已废弃", "POST", "/api/broadcast/s1/g1/c1", nil, http.StatusNotFound},
 		{"WebSocket 无升级头", "GET", "/ws/s1/g1/c1", nil, http.StatusBadRequest},
 		{"天气省市区查询无凭据", "GET", "/api/weather/shanghai/pudong", nil, http.StatusForbidden},
 		{"天气城市查询无凭据", "GET", "/api/weather/shanghai", nil, http.StatusForbidden},

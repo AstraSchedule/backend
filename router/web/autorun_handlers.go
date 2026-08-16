@@ -36,12 +36,19 @@ func persistAutorunRule(c *gin.Context, payload autorunPayload, params map[strin
 	if hashID == "" {
 		hashID = makeHashID(payload.Type, scope, payload.Priority, params)
 	}
+	// 更新前取回旧作用域：scope 变更时，旧作用域的客户端同样需要刷新通知
+	var oldScopes []string
+	if rows, err := db.FetchAutorunRecords(hashID); err == nil && len(rows) > 0 {
+		oldScopes = rows[0].Scope
+	}
 	record := dbTable.AutorunRecord{HashID: hashID, EType: payload.Type, Scope: scope, Parameters: params, Level: payload.Priority, Status: 0}
 	if err := db.UpsertAutorunRecord(&record); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	_, _ = db.RefreshAutorunStatuses(time.Now())
+	// 规则变更影响课表解析，按新旧作用域并集广播刷新
+	broadcastScopes(mergeScopes(oldScopes, scope))
 	c.JSON(http.StatusOK, gin.H{"status": 200, "id": hashID})
 }
 
@@ -118,6 +125,11 @@ func GetAutorunHashStatus(c *gin.Context) {
 
 func DeleteAutorunRecord(c *gin.Context) {
 	hashid := c.Param("hashid")
+	// 删除前取回规则作用域，删除后按原作用域广播刷新
+	var scopes []string
+	if rows, err := db.FetchAutorunRecords(hashid); err == nil && len(rows) > 0 {
+		scopes = rows[0].Scope
+	}
 	affected, err := db.DeleteAutorunRecord(hashid)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -128,6 +140,7 @@ func DeleteAutorunRecord(c *gin.Context) {
 		return
 	}
 	_, _ = db.RefreshAutorunStatuses(time.Now())
+	broadcastScopes(scopes)
 	c.JSON(http.StatusOK, gin.H{"status": 200, "deleted": affected, "id": hashid})
 }
 

@@ -64,7 +64,7 @@ func buildRouter() *gin.Engine {
 	adminGroup.PUT("/web/users/:id", web.UpdateUser)
 	adminGroup.DELETE("/web/users/:id", web.DeleteUser)
 
-	// 管理员或密码验证可操作的写接口
+	// 需 JWT + 密码验证的写接口
 	secureWrite := router.Group("/", middleware.AdminOrToken())
 
 	router.GET("/", func(c *gin.Context) {
@@ -73,7 +73,7 @@ func buildRouter() *gin.Engine {
 		})
 	})
 
-	// 完整更新课表（兼容 BasicAuth 客户端）
+	// 完整更新课表（需 JWT + 密码验证）
 	secureWrite.PUT("/:school/:grade/:class", client.PutSchedule)
 	// 获取完整课表
 	router.GET("/:school/:grade/:class", client.GetSchedule)
@@ -85,8 +85,7 @@ func buildRouter() *gin.Engine {
 	router.GET("/api/weather/", client.GetWeatherWithCFHeader)
 	// WebSocket
 	router.Any("/ws/:school/:grade/:class_number", client.WebSocketPlaceholder)
-	// 广播
-	secureWrite.POST("/api/broadcast/:school/:grade/:class_number", client.BroadcastSyncConfig)
+	// 注意：/api/broadcast 外部广播入口已废弃移除，广播仅由后端写操作内部触发（client.BroadcastSync*）
 
 	// 菜单/结构（读接口，与既有模式一致）；statistic 需 JWT 认证（防跨租户泄露）
 	router.GET("/web/menu", web.GetMenu)
@@ -144,7 +143,7 @@ func buildRouter() *gin.Engine {
 	// 按日期出课节
 	router.GET("/web/schedule/by-date", web.GetScheduleByDate)
 
-	// Admin: DROP table (仅内部调用，需 BasicAuth + password 验证)
+	// Admin: DROP table（需 JWT + 密码验证）
 	secureWrite.DELETE("/web/admin/drop-table/:table", web.DropAstraTable)
 
 	return router

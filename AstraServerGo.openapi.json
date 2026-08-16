@@ -156,40 +156,6 @@
         "security": [{ "jwtAuth": [] }]
       }
     },
-    "/api/broadcast/{school}/{grade}/{class_number}": {
-      "post": {
-        "summary": "广播同步消息（SyncConfig）",
-        "description": "向指定级部所有已连接的 WebSocket 客户端发送 SyncConfig 消息，通知客户端拉取最新配置。无需请求体。",
-        "operationId": "broadcastSyncConfig",
-        "tags": ["websocket"],
-        "parameters": [
-          {
-            "name": "school", "in": "path", "description": "学校标识", "required": true,
-            "schema": { "type": "string" }
-          },
-          {
-            "name": "grade", "in": "path", "description": "年级", "required": true,
-            "schema": { "type": "string" }
-          },
-          {
-            "name": "class_number", "in": "path", "description": "班级", "required": true,
-            "schema": { "type": "string" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "广播结果",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/BroadcastResponse" }
-              }
-            }
-          },
-          "401": { "description": "Basic Auth 认证失败" }
-        },
-        "security": [{ "jwtAuth": [] }]
-      }
-    },
     "/web/statistic": {
       "get": {
         "summary": "获取统计信息",
@@ -2532,15 +2498,6 @@
           "weat": { "type": "string", "example": "不存在" },
           "warning": { "type": "string" },
           "brief_warn": { "type": "string" }
-        }
-      },
-      "BroadcastResponse": {
-        "type": "object",
-        "properties": {
-          "status": { "type": "integer" },
-          "message": { "type": "string", "example": "SyncConfig" },
-          "sent": { "type": "integer", "description": "成功发送的 WebSocket 消息数" },
-          "websocket_enabled": { "type": "boolean", "description": "WebSocket 功能是否启用" }
         }
       },
       "StatisticResponse": {
