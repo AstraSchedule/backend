@@ -57,6 +57,12 @@ func CheckUserScopeString(c *gin.Context, scope string) bool {
 		return true
 	}
 	parts := strings.Split(scope, "/")
+	// 超过三段或首段为空的作用域串无法对应真实结构，直接拒绝，
+	// 防止截断校验后把死数据写入 AutorunRecord/CountdownRecord.Scope
+	if len(parts) > 3 || parts[0] == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "作用域格式无效"})
+		return false
+	}
 	school := parts[0]
 	grade, class := "", ""
 	if len(parts) > 1 {

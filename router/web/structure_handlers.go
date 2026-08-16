@@ -54,14 +54,30 @@ func CreateSchool(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "学校创建成功"})
 }
 
-// rejectReservedSchoolName 拒绝保留值 "ALL"：学校名 ALL 会与自动任务全局规则的作用域冲突，
-// 删除学校 "ALL" 会按前缀匹配误删全局规则。返回 true 表示已写入 400 响应，调用方直接 return。
+// rejectReservedSchoolName 拒绝保留值 "ALL" 与含作用域分隔符 / 的学校名：
+// ALL 会与自动任务全局规则的作用域冲突（删除学校 "ALL" 会按前缀匹配误删全局规则）；
+// 含 / 会破坏作用域前缀匹配（如班级名 1/2 会使删除班级 1 时误删该规则）。
+// 返回 true 表示已写入 400 响应，调用方直接 return。
 func rejectReservedSchoolName(c *gin.Context, school string) bool {
-	if school != "ALL" {
-		return false
+	if school == "ALL" {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "学校名称不能为保留值 ALL"})
+		return true
 	}
-	c.JSON(http.StatusBadRequest, gin.H{"detail": "学校名称不能为保留值 ALL"})
-	return true
+	if strings.Contains(school, "/") {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "学校名称不能包含作用域分隔符 /"})
+		return true
+	}
+	return false
+}
+
+// rejectInvalidChildName 拒绝含作用域分隔符 / 的年级/班级名：含 / 会破坏作用域前缀匹配，
+// 导致结构删除时误删其它班级的规则。返回 true 表示已写入 400 响应，调用方直接 return。
+func rejectInvalidChildName(c *gin.Context, name string) bool {
+	if strings.Contains(name, "/") {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "名称不能包含作用域分隔符 /"})
+		return true
+	}
+	return false
 }
 
 // rollbackAnd500 回滚事务并写入 500 响应，供删除流程统一处理错误。
@@ -176,6 +192,9 @@ func CreateGrade(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "年级名称不能为空"})
+		return
+	}
+	if rejectInvalidChildName(c, req.Name) {
 		return
 	}
 
@@ -293,6 +312,9 @@ func CreateClass(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "班级名称不能为空"})
+		return
+	}
+	if rejectInvalidChildName(c, req.Name) {
 		return
 	}
 
