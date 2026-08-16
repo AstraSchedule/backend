@@ -383,7 +383,10 @@ func TestRouteTable_StructureDeleteRemovesAutorunRules(t *testing.T) {
 	seedRule("r-class", "2099-01-01", "清理测试/2026/1")
 	seedRule("r-other", "2099-01-01", "别处/2026/1")
 	seedRule("r-all", "2099-01-01", "ALL")
-	seedRule("r-expired", "2020-01-01", "清理测试/2026/1")
+	// 已过期规则（status=2）由 SQL 过滤：不随结构删除清理，历史数据保留
+	expired := newRule("r-expired", "2020-01-01", "清理测试/2026/1")
+	expired.Status = 2
+	assert.NoError(t, db.GetDB().Save(expired).Error)
 
 	// 多作用域记录：删除匹配作用域时必须保留无关作用域
 	assert.NoError(t, db.GetDB().Save(newRule("r-multi", "2099-01-01", "清理测试/2026/2", "别处/2026/2")).Error)

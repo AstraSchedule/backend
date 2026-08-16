@@ -84,34 +84,21 @@ func deleteRecordsTx(tx *gorm.DB, where string, args []interface{}, models ...in
 	return nil
 }
 
-// autorunRuleDate 提取规则日期（Parameters.rule.date，格式 2006-01-02）；缺失或解析失败返回 false。
-func autorunRuleDate(r dbTable.AutorunRecord) (string, bool) {
-	rule, ok := r.Parameters["rule"].(map[string]interface{})
-	if !ok {
-		return "", false
-	}
-	d, ok := rule["date"].(string)
-	return d, ok && d != ""
-}
-
 // deleteAutorunRecordsByScopePrefix 在事务连接上移除作用域前缀匹配的自动任务规则作用域。
 // AutorunRecord 没有 school 列，作用域存于 Scope JSON 字段，需逐条过滤：
 // 仅移除匹配的作用域；无剩余作用域时删除整条记录，否则回写剩余作用域，
 // 避免整行删除误伤同一记录中的无关作用域。scope "ALL" 的全局规则不受影响
 //（调用方已拒绝保留值 ALL）。
-// 已过期规则（date 早于今天）不会再被规则引擎命中，删除与否无差异：跳过扫描，
-// 保留历史记录并减少无谓写入（date 缺失时保守处理，照常扫描）。
+// 已过期规则（status=2）不会再被规则引擎命中，删除与否无差异：由 SQL WHERE 下推过滤
+//（过期数据通常远多于待生效/生效中，下推可减少载入行数），保留历史数据。
 // 注意必须复用 tx 连接：内存库单连接池下在事务未提交时调用 db.GetDB() 会死锁。
 func deleteAutorunRecordsByScopePrefix(tx *gorm.DB, prefix string) error {
 	var rows []dbTable.AutorunRecord
-	if err := tx.Find(&rows).Error; err != nil {
+	// status：0 待生效 / 1 生效中 / 2 已过期（与 db.RefreshAutorunStatuses 维护值一致）
+	if err := tx.Where("status <> ?", 2).Find(&rows).Error; err != nil {
 		return err
 	}
-	today := time.Now().Format("2006-01-02")
 	for _, r := range rows {
-		if d, ok := autorunRuleDate(r); ok && d < today {
-			continue // 已过期：规则引擎不再命中，保留历史数据
-		}
 		remaining := make([]string, 0, len(r.Scope))
 		for _, s := range r.Scope {
 			if s == prefix || strings.HasPrefix(s, prefix+"/") {
