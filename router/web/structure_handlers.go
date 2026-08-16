@@ -4,9 +4,11 @@ import (
 	"AstraScheduleServerGo/db"
 	"AstraScheduleServerGo/model/dbTable"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -43,6 +45,39 @@ func CreateSchool(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "学校创建成功"})
 }
 
+// deleteRecordsTx 在事务内按作用域条件删除多张表，任一条语句失败即返回错误。
+// 此前各 Delete 语句的返回值被忽略，SQL 错误（如列不存在）会被静默吞掉。
+func deleteRecordsTx(tx *gorm.DB, where string, args []interface{}, models ...interface{}) error {
+	for _, m := range models {
+		if err := tx.Where(where, args...).Delete(m).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteAutorunRecordsByScopePrefix 在事务连接上删除作用域前缀匹配的自动任务规则。
+// AutorunRecord 没有 school 列，作用域存于 Scope JSON 字段，需取出后按 hash 删除；
+// scope "ALL" 的全局规则不受影响。注意必须复用 tx 连接：内存库单连接池下
+// 在事务未提交时调用 db.GetDB() 会死锁。
+func deleteAutorunRecordsByScopePrefix(tx *gorm.DB, prefix string) error {
+	var rows []dbTable.AutorunRecord
+	if err := tx.Find(&rows).Error; err != nil {
+		return err
+	}
+	for _, r := range rows {
+		for _, s := range r.Scope {
+			if s == prefix || strings.HasPrefix(s, prefix+"/") {
+				if err := tx.Where("hash_id = ?", r.HashID).Delete(&dbTable.AutorunRecord{}).Error; err != nil {
+					return err
+				}
+				break
+			}
+		}
+	}
+	return nil
+}
+
 func DeleteSchool(c *gin.Context) {
 	school := c.Param("school")
 	if school == "" {
@@ -53,12 +88,18 @@ func DeleteSchool(c *gin.Context) {
 	tx := db.GetDB().Begin()
 	defer func() { if recover() != nil { tx.Rollback() } }()
 
-	tx.Where(whereSchool, school).Delete(&dbTable.Schedule{})
-	tx.Where(whereSchool, school).Delete(&dbTable.ClientConfig{})
-	tx.Where(whereSchool, school).Delete(&dbTable.DataVersion{})
-	tx.Where(whereSchool, school).Delete(&dbTable.Subject{})
-	tx.Where(whereSchool, school).Delete(&dbTable.Timetable{})
-	tx.Where(whereSchool, school).Delete(&dbTable.AutorunRecord{})
+	if err := deleteRecordsTx(tx, whereSchool, []interface{}{school},
+		&dbTable.Schedule{}, &dbTable.ClientConfig{}, &dbTable.DataVersion{},
+		&dbTable.Subject{}, &dbTable.Timetable{}); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := deleteAutorunRecordsByScopePrefix(tx, school); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
 	if err := tx.Commit().Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -155,12 +196,18 @@ func DeleteGrade(c *gin.Context) {
 	tx := db.GetDB().Begin()
 	defer func() { if recover() != nil { tx.Rollback() } }()
 
-	tx.Where(whereSchoolGrade, school, grade).Delete(&dbTable.Schedule{})
-	tx.Where(whereSchoolGrade, school, grade).Delete(&dbTable.ClientConfig{})
-	tx.Where(whereSchoolGrade, school, grade).Delete(&dbTable.DataVersion{})
-	tx.Where(whereSchoolGrade, school, grade).Delete(&dbTable.Subject{})
-	tx.Where(whereSchoolGrade, school, grade).Delete(&dbTable.Timetable{})
-	tx.Where(whereSchoolGrade, school, grade).Delete(&dbTable.AutorunRecord{})
+	if err := deleteRecordsTx(tx, whereSchoolGrade, []interface{}{school, grade},
+		&dbTable.Schedule{}, &dbTable.ClientConfig{}, &dbTable.DataVersion{},
+		&dbTable.Subject{}, &dbTable.Timetable{}); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := deleteAutorunRecordsByScopePrefix(tx, school+"/"+grade); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
 	if err := tx.Commit().Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -281,9 +328,17 @@ func DeleteClass(c *gin.Context) {
 	tx := db.GetDB().Begin()
 	defer func() { if recover() != nil { tx.Rollback() } }()
 
-	tx.Where(whereSchoolGradeClass, school, grade, classNumber).Delete(&dbTable.Schedule{})
-	tx.Where(whereSchoolGradeClass, school, grade, classNumber).Delete(&dbTable.ClientConfig{})
-	tx.Where(whereSchoolGradeClass, school, grade, classNumber).Delete(&dbTable.DataVersion{})
+	if err := deleteRecordsTx(tx, whereSchoolGradeClass, []interface{}{school, grade, classNumber},
+		&dbTable.Schedule{}, &dbTable.ClientConfig{}, &dbTable.DataVersion{}); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := deleteAutorunRecordsByScopePrefix(tx, school+"/"+grade+"/"+classNumber); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
 	if err := tx.Commit().Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

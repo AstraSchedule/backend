@@ -351,6 +351,61 @@ func TestRouteTable_StructureCRUDFlow(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+// TestRouteTable_StructureDeleteRemovesAutorunRules 级联删除结构时应同步清理作用域匹配的自动任务规则，
+// 且不影响其它作用域与 ALL 全局规则。
+func TestRouteTable_StructureDeleteRemovesAutorunRules(t *testing.T) {
+	router := setupContractEnv(t)
+	token := createContractUser(t, "admin-del-rule", "test123", "admin")
+	h := map[string]string{"Authorization": "Bearer " + token, "X-Verify-Password": "test123"}
+
+	// 创建学校/年级/班级
+	w := contractRequest(t, router, "POST", "/web/schools", map[string]string{"name": "清理测试"}, h)
+	assert.Equal(t, http.StatusOK, w.Code)
+	w = contractRequest(t, router, "POST", "/web/schools/清理测试/grades", map[string]string{"name": "2026"}, h)
+	assert.Equal(t, http.StatusOK, w.Code)
+	w = contractRequest(t, router, "POST", "/web/schools/清理测试/grades/2026/classes", map[string]string{"name": "1"}, h)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 造不同作用域的规则（含无关作用域与 ALL 全局规则）
+	seedRule := func(id, scope string) {
+		assert.NoError(t, db.GetDB().Save(&dbTable.AutorunRecord{
+			HashID: id, EType: dbTable.AutorunTypeSchedule, Scope: []string{scope},
+			Parameters: map[string]interface{}{"rule": map[string]interface{}{"date": "2025-10-13", "schedule": map[string]interface{}{"periods": []interface{}{}}}},
+			Level: 1,
+		}).Error)
+	}
+	seedRule("r-school", "清理测试")
+	seedRule("r-grade", "清理测试/2026")
+	seedRule("r-class", "清理测试/2026/1")
+	seedRule("r-other", "别处/2026/1")
+	seedRule("r-all", "ALL")
+
+	ruleExists := func(id string) bool {
+		rows, err := db.FetchAutorunRecords(id)
+		require.NoError(t, err)
+		return len(rows) == 1
+	}
+
+	// 删班级：只清理班级级规则
+	w = contractRequest(t, router, "DELETE", "/web/schools/清理测试/grades/2026/classes/1", nil, h)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, ruleExists("r-class"), "班级级规则应随班级删除")
+	assert.True(t, ruleExists("r-grade"), "年级级规则不应被班级删除影响")
+
+	// 删年级：清理年级级（及以下）规则
+	w = contractRequest(t, router, "DELETE", "/web/schools/清理测试/grades/2026", nil, h)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, ruleExists("r-grade"), "年级级规则应随年级删除")
+	assert.True(t, ruleExists("r-school"), "学校级规则不应被年级删除影响")
+
+	// 删学校：清理学校级（及以下）规则，无关与 ALL 规则保留
+	w = contractRequest(t, router, "DELETE", "/web/schools/清理测试", nil, h)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, ruleExists("r-school"), "学校级规则应随学校删除")
+	assert.True(t, ruleExists("r-other"), "无关作用域规则不应受影响")
+	assert.True(t, ruleExists("r-all"), "ALL 全局规则不应受影响")
+}
+
 // TestRouteTable_CreateGradeConcurrent 并发创建同名年级：恰好一个成功、一个 409，
 // 防止预检查竞态导致两个请求都返回 200。
 func TestRouteTable_CreateGradeConcurrent(t *testing.T) {
