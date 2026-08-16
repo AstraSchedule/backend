@@ -58,6 +58,21 @@ func rejectReservedSchoolName(c *gin.Context, school string) bool {
 	return true
 }
 
+// rollbackAnd500 回滚事务并写入 500 响应，供删除流程统一处理错误。
+func rollbackAnd500(c *gin.Context, tx *gorm.DB, err error) {
+	tx.Rollback()
+	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+}
+
+// commitOr500 提交事务；失败时写入 500 响应并返回 false。
+func commitOr500(c *gin.Context, tx *gorm.DB) bool {
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return false
+	}
+	return true
+}
+
 // deleteRecordsTx 在事务内按作用域条件删除多张表，任一条语句失败即返回错误。
 // 此前各 Delete 语句的返回值被忽略，SQL 错误（如列不存在）会被静默吞掉。
 func deleteRecordsTx(tx *gorm.DB, where string, args []interface{}, models ...interface{}) error {
@@ -127,18 +142,15 @@ func DeleteSchool(c *gin.Context) {
 	if err := deleteRecordsTx(tx, whereSchool, []interface{}{school},
 		&dbTable.Schedule{}, &dbTable.ClientConfig{}, &dbTable.DataVersion{},
 		&dbTable.Subject{}, &dbTable.Timetable{}); err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		rollbackAnd500(c, tx, err)
 		return
 	}
 	if err := deleteAutorunRecordsByScopePrefix(tx, school); err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		rollbackAnd500(c, tx, err)
 		return
 	}
 
-	if err := tx.Commit().Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if !commitOr500(c, tx) {
 		return
 	}
 	broadcastScopes([]string{school})
@@ -241,18 +253,15 @@ func DeleteGrade(c *gin.Context) {
 	if err := deleteRecordsTx(tx, whereSchoolGrade, []interface{}{school, grade},
 		&dbTable.Schedule{}, &dbTable.ClientConfig{}, &dbTable.DataVersion{},
 		&dbTable.Subject{}, &dbTable.Timetable{}); err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		rollbackAnd500(c, tx, err)
 		return
 	}
 	if err := deleteAutorunRecordsByScopePrefix(tx, school+"/"+grade); err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		rollbackAnd500(c, tx, err)
 		return
 	}
 
-	if err := tx.Commit().Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if !commitOr500(c, tx) {
 		return
 	}
 	broadcastScopes([]string{school + "/" + grade})
@@ -378,18 +387,15 @@ func DeleteClass(c *gin.Context) {
 
 	if err := deleteRecordsTx(tx, whereSchoolGradeClass, []interface{}{school, grade, classNumber},
 		&dbTable.Schedule{}, &dbTable.ClientConfig{}, &dbTable.DataVersion{}); err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		rollbackAnd500(c, tx, err)
 		return
 	}
 	if err := deleteAutorunRecordsByScopePrefix(tx, school+"/"+grade+"/"+classNumber); err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		rollbackAnd500(c, tx, err)
 		return
 	}
 
-	if err := tx.Commit().Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if !commitOr500(c, tx) {
 		return
 	}
 	broadcastScopes([]string{school + "/" + grade})
