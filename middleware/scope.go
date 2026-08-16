@@ -41,8 +41,21 @@ func CheckUserScope(c *gin.Context, school, grade, class string) bool {
 }
 
 // CheckUserScopeString 解析 1~3 段作用域串（school[/grade[/class]]）后按数据库当前用户校验写权限。
-// admin 恒通过；非 admin 写入 ALL 级规则会被拒绝（防止校/级/班写角色越权下发全局规则）。
+// admin 恒通过。ALL 级规则仅 admin 可写，必须显式按角色拒绝：
+// school_w 且 Scope=="ALL" 会把 "ALL" 解析成 school 前缀而通过 CheckScopePermission，造成越权下发全局规则。
 func CheckUserScopeString(c *gin.Context, scope string) bool {
+	if scope == "ALL" {
+		user := CurrentDBUser(c)
+		if user == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"detail": "未认证"})
+			return false
+		}
+		if user.Role != "admin" {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "无权操作该作用域"})
+			return false
+		}
+		return true
+	}
 	parts := strings.Split(scope, "/")
 	school := parts[0]
 	grade, class := "", ""

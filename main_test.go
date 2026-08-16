@@ -11,7 +11,6 @@ import (
 	"AstraScheduleServerGo/db"
 	"AstraScheduleServerGo/model"
 	"AstraScheduleServerGo/model/dbTable"
-	"AstraScheduleServerGo/service"
 	"AstraScheduleServerGo/testutil"
 
 	"github.com/gin-gonic/gin"
@@ -79,12 +78,7 @@ func createContractUser(t *testing.T, username, password, role string) string {
 // createContractUserScoped 创建指定角色与作用域的测试用户并返回登录 token
 func createContractUserScoped(t *testing.T, username, password, role, scope string) string {
 	t.Helper()
-	hash, err := service.HashPassword(password)
-	require.NoError(t, err)
-	require.NoError(t, db.GetDB().Where("username = ?", username).Delete(&dbTable.User{}).Error)
-	require.NoError(t, db.GetDB().Create(&dbTable.User{
-		Username: username, PasswordHash: hash, Role: role, Scope: scope,
-	}).Error)
+	testutil.CreateUser(t, db.GetDB(), username, password, role, scope)
 
 	w := contractRequest(t, buildRouter(), "POST", "/web/auth/login",
 		map[string]string{"username": username, "password": password}, nil)
@@ -329,6 +323,59 @@ func TestRouteTable_AuthMatrix(t *testing.T) {
 		require.NoError(t, db.GetDB().Model(&dbTable.User{}).Where("username = ?", "narrowed1").
 			Updates(map[string]interface{}{"role": "class_w", "scope": "s1/g1/c1"}).Error)
 		w := contractRequest(t, router, "PUT", "/s1/g1/c2", map[string]interface{}{}, authPwd(narrowed, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("school_w 且 Scope=ALL 写 ALL 规则被拒 403", func(t *testing.T) {
+		// school_w 若自身 Scope 为 ALL，"ALL" 会被解析成 school 前缀通过校验，必须显式拒绝
+		sw := createContractUserScoped(t, "schoolwall1", "test123", "school_w", "ALL")
+		body := map[string]interface{}{
+			"scope":     []string{"ALL"},
+			"schedules": []map[string]interface{}{
+				{"name": "x", "date": "2026-01-01", "priority": 1},
+			},
+		}
+		w := contractRequest(t, router, "PUT", "/web/countdown", body, authPwd(sw, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("class_w 覆盖他人作用域的倒数日被拒 403", func(t *testing.T) {
+		// admin 建双作用域记录；class_w 借 recordID 提交自身作用域更新：旧作用域含无权 c2，必须 403
+		body := map[string]interface{}{
+			"scope":     []string{"s1/g1/c1", "s1/g1/c2"},
+			"schedules": []map[string]interface{}{
+				{"name": "x", "date": "2026-01-01", "priority": 1},
+			},
+		}
+		w := contractRequest(t, router, "PUT", "/web/countdown", body, authPwd(adminToken, "test123"))
+		require.Equal(t, http.StatusOK, w.Code)
+		id := decodeJSON(t, w)["id"].(string)
+
+		cw := createContractUserScoped(t, "classw3", "test123", "class_w", "s1/g1/c1")
+		body2 := map[string]interface{}{
+			"id":        id,
+			"scope":     []string{"s1/g1/c1"},
+			"schedules": []map[string]interface{}{
+				{"name": "y", "date": "2026-01-01", "priority": 1},
+			},
+		}
+		w = contractRequest(t, router, "PUT", "/web/countdown", body2, authPwd(cw, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("class_w 覆盖他人作用域的自动任务被拒 403", func(t *testing.T) {
+		// admin 建双作用域规则；class_w 借 id 提交自身作用域更新：旧作用域含无权 c2，必须 403
+		body := map[string]interface{}{
+			"type": 1, "scope": []string{"s1/g1/c1", "s1/g1/c2"}, "priority": 1,
+			"content": map[string]interface{}{"date": "2026-01-01", "timetableId": "exam"},
+		}
+		w := contractRequest(t, router, "PUT", "/web/autorun/timetable", body, authPwd(adminToken, "test123"))
+		require.Equal(t, http.StatusOK, w.Code)
+		id := decodeJSON(t, w)["id"].(string)
+
+		cw := createContractUserScoped(t, "classw4", "test123", "class_w", "s1/g1/c1")
+		body2 := map[string]interface{}{
+			"id": id, "type": 1, "scope": []string{"s1/g1/c1"}, "priority": 1,
+			"content": map[string]interface{}{"date": "2026-01-01", "timetableId": "exam"},
+		}
+		w = contractRequest(t, router, "PUT", "/web/autorun/timetable", body2, authPwd(cw, "test123"))
 		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 	t.Run("结构创建 school_w 建本校放行", func(t *testing.T) {

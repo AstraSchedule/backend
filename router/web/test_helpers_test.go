@@ -11,6 +11,7 @@ import (
 	"AstraScheduleServerGo/middleware"
 	"AstraScheduleServerGo/model/dbTable"
 	"AstraScheduleServerGo/service"
+	"AstraScheduleServerGo/testutil"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -20,11 +21,7 @@ import (
 // handler 级测试不挂完整认证中间件，直接挂本中间件补上下文，供 handler 内的作用域校验（CheckUserScope*）使用。
 func adminOnly(t *testing.T) gin.HandlerFunc {
 	t.Helper()
-	hash, err := service.HashPassword("test123")
-	require.NoError(t, err)
-	require.NoError(t, db.GetDB().Where("username = ?", "mw-web-admin").Delete(&dbTable.User{}).Error)
-	user := &dbTable.User{Username: "mw-web-admin", PasswordHash: hash, Role: "admin", Scope: "ALL"}
-	require.NoError(t, db.GetDB().Create(user).Error)
+	user := testutil.CreateUser(t, db.GetDB(), "mw-web-admin", "test123", "admin", "ALL")
 	claims := &service.JWTClaims{UserID: user.ID, Username: user.Username, Role: user.Role, Scope: user.Scope}
 	return func(c *gin.Context) {
 		c.Set(middleware.UserClaimsKey, claims)

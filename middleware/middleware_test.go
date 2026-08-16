@@ -33,15 +33,9 @@ func createMwUser(t *testing.T, username, password, role string) *dbTable.User {
 	return createMwUserScoped(t, username, password, role, "ALL")
 }
 
-// createMwUserScoped 创建指定角色与作用域的测试用户
+// createMwUserScoped 创建指定角色与作用域的测试用户（复用 testutil.CreateUser 避免重复样板）
 func createMwUserScoped(t *testing.T, username, password, role, scope string) *dbTable.User {
-	t.Helper()
-	hash, err := service.HashPassword(password)
-	require.NoError(t, err)
-	require.NoError(t, db.GetDB().Where("username = ?", username).Delete(&dbTable.User{}).Error)
-	user := &dbTable.User{Username: username, PasswordHash: hash, Role: role, Scope: scope}
-	require.NoError(t, db.GetDB().Create(user).Error)
-	return user
+	return testutil.CreateUser(t, db.GetDB(), username, password, role, scope)
 }
 
 func mwToken(t *testing.T, user *dbTable.User) string {
@@ -385,4 +379,30 @@ func TestRequireScope_DowngradedUserForbidden(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	w = doMwRequest(router, "PUT", "/t/s1/g1/c1", "{}", map[string]string{"Authorization": "Bearer " + token})
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestCheckUserScopeString_NonAdminALLForbidden(t *testing.T) {
+	setupMwEnv(t)
+
+	// school_w 且 Scope=="ALL"：把 "ALL" 解析成 school 前缀会通过 CheckScopePermission，
+	// 必须显式按角色拒绝，防止越权写全局规则
+	user := createMwUserScoped(t, "scopewall", "test123", "school_w", "ALL")
+	token := mwToken(t, user)
+	claims, err := service.ParseToken(model.Configs.Secret.Token, token)
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set(UserClaimsKey, claims)
+	assert.False(t, CheckUserScopeString(c, "ALL"))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	// admin 写 ALL 放行
+	admin := createMwUserScoped(t, "scopealladmin", "test123", "admin", "ALL")
+	adminToken := mwToken(t, admin)
+	adminClaims, err := service.ParseToken(model.Configs.Secret.Token, adminToken)
+	require.NoError(t, err)
+	w2 := httptest.NewRecorder()
+	c2, _ := gin.CreateTestContext(w2)
+	c2.Set(UserClaimsKey, adminClaims)
+	assert.True(t, CheckUserScopeString(c2, "ALL"))
 }
