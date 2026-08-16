@@ -57,11 +57,14 @@ func CheckUserScopeString(c *gin.Context, scope string) bool {
 		return true
 	}
 	parts := strings.Split(scope, "/")
-	// 超过三段或首段为空的作用域串无法对应真实结构，直接拒绝，
+	// 超过三段、首段为 ALL 的变体、或任一分段为空的作用域串都无法对应真实结构，直接拒绝：
 	// 防止截断校验后把死数据写入 AutorunRecord/CountdownRecord.Scope；
-	// 首段为 ALL 的变体（如 ALL/g1/c1）同样拒绝：精确 ALL 已在上方按角色处理，
-	// 变体会被 school_w(Scope=ALL) 借首段匹配绕过角色检查
-	if len(parts) > 3 || parts[0] == "" || parts[0] == "ALL" {
+	// ALL 变体（如 ALL/g1/c1）会被 school_w(Scope=ALL) 借首段匹配绕过角色检查；
+	// 空分段（如 s1/、s1/g1/、s1//c1）会被按父级授权的角色放行后原样入库
+	if len(parts) > 3 ||
+		parts[0] == "" || parts[0] == "ALL" ||
+		(len(parts) > 1 && parts[1] == "") ||
+		(len(parts) > 2 && parts[2] == "") {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "作用域格式无效"})
 		return false
 	}
