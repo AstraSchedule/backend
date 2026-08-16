@@ -212,7 +212,7 @@ func makeRecord(etype int, scope []string, level int, rule map[string]interface{
 
 func TestApplyScheduleRules_Compensation(t *testing.T) {
 	records := []dbTable.AutorunRecord{
-		makeRecord(0, []string{"ALL"}, 1, map[string]interface{}{"date": "2025-10-13", "useDate": "2025-10-14"}),
+		makeRecord(dbTable.AutorunTypeCompensation, []string{"ALL"}, 1, map[string]interface{}{"date": "2025-10-13", "useDate": "2025-10-14"}),
 	}
 	resolved := ApplyScheduleRules(baseSchedule(), baseTimetable(), records, "s", "g", "c", mondayDate())
 
@@ -225,7 +225,7 @@ func TestApplyScheduleRules_Compensation(t *testing.T) {
 
 func TestApplyScheduleRules_Timetable(t *testing.T) {
 	records := []dbTable.AutorunRecord{
-		makeRecord(1, []string{"ALL"}, 1, map[string]interface{}{"date": "2025-10-13", "timetableId": "exam"}),
+		makeRecord(dbTable.AutorunTypeTimetable, []string{"ALL"}, 1, map[string]interface{}{"date": "2025-10-13", "timetableId": "exam"}),
 	}
 	resolved := ApplyScheduleRules(baseSchedule(), baseTimetable(), records, "s", "g", "c", mondayDate())
 
@@ -234,7 +234,7 @@ func TestApplyScheduleRules_Timetable(t *testing.T) {
 
 func TestApplyScheduleRules_Schedule(t *testing.T) {
 	records := []dbTable.AutorunRecord{
-		makeRecord(2, []string{"ALL"}, 1, map[string]interface{}{
+		makeRecord(dbTable.AutorunTypeSchedule, []string{"ALL"}, 1, map[string]interface{}{
 			"date": "2025-10-13",
 			"schedule": map[string]interface{}{
 				"periods": []interface{}{
@@ -252,7 +252,7 @@ func TestApplyScheduleRules_Schedule(t *testing.T) {
 
 func TestApplyScheduleRules_All(t *testing.T) {
 	records := []dbTable.AutorunRecord{
-		makeRecord(3, []string{"ALL"}, 1, map[string]interface{}{
+		makeRecord(dbTable.AutorunTypeAll, []string{"ALL"}, 1, map[string]interface{}{
 			"date":        "2025-10-13",
 			"timetableId": "exam",
 			"schedule": map[string]interface{}{
@@ -271,11 +271,11 @@ func TestApplyScheduleRules_All(t *testing.T) {
 func TestApplyScheduleRules_PriorityOrdering(t *testing.T) {
 	// 同日期两条 SCHEDULE 规则：priority 更高（Level 更大）者胜出
 	records := []dbTable.AutorunRecord{
-		makeRecord(2, []string{"ALL"}, 1, map[string]interface{}{
+		makeRecord(dbTable.AutorunTypeSchedule, []string{"ALL"}, 1, map[string]interface{}{
 			"date":     "2025-10-13",
 			"schedule": map[string]interface{}{"periods": []interface{}{map[string]interface{}{"no": 1, "subject": "低优先级"}}},
 		}),
-		makeRecord(2, []string{"ALL"}, 2, map[string]interface{}{
+		makeRecord(dbTable.AutorunTypeSchedule, []string{"ALL"}, 2, map[string]interface{}{
 			"date":     "2025-10-13",
 			"schedule": map[string]interface{}{"periods": []interface{}{map[string]interface{}{"no": 1, "subject": "高优先级"}}},
 		}),
@@ -289,16 +289,16 @@ func TestApplyScheduleRules_PriorityOrdering(t *testing.T) {
 func TestApplyScheduleRules_ScopeSpecificity(t *testing.T) {
 	// 同优先级下，更具体的 scope（班级）覆盖 ALL
 	records := []dbTable.AutorunRecord{
-		makeRecord(2, []string{"ALL"}, 1, map[string]interface{}{
+		makeRecord(dbTable.AutorunTypeSchedule, []string{"ALL"}, 1, map[string]interface{}{
 			"date":     "2025-10-13",
 			"schedule": map[string]interface{}{"periods": []interface{}{map[string]interface{}{"no": 1, "subject": "全校"}}},
 		}),
-		makeRecord(2, []string{"s/g/c"}, 1, map[string]interface{}{
+		makeRecord(dbTable.AutorunTypeSchedule, []string{"s/g/c"}, 1, map[string]interface{}{
 			"date":     "2025-10-13",
 			"schedule": map[string]interface{}{"periods": []interface{}{map[string]interface{}{"no": 1, "subject": "本班"}}},
 		}),
 		// 其它班级的规则不应生效
-		makeRecord(2, []string{"s/g/other"}, 1, map[string]interface{}{
+		makeRecord(dbTable.AutorunTypeSchedule, []string{"s/g/other"}, 1, map[string]interface{}{
 			"date":     "2025-10-13",
 			"schedule": map[string]interface{}{"periods": []interface{}{map[string]interface{}{"no": 1, "subject": "他班"}}},
 		}),
@@ -311,7 +311,7 @@ func TestApplyScheduleRules_ScopeSpecificity(t *testing.T) {
 
 func TestApplyScheduleRules_DateMismatch(t *testing.T) {
 	records := []dbTable.AutorunRecord{
-		makeRecord(2, []string{"ALL"}, 1, map[string]interface{}{
+		makeRecord(dbTable.AutorunTypeSchedule, []string{"ALL"}, 1, map[string]interface{}{
 			"date":     "2025-10-14",
 			"schedule": map[string]interface{}{"periods": []interface{}{map[string]interface{}{"no": 1, "subject": "明天"}}},
 		}),
@@ -319,4 +319,71 @@ func TestApplyScheduleRules_DateMismatch(t *testing.T) {
 	resolved := ApplyScheduleRules(baseSchedule(), baseTimetable(), records, "s", "g", "c", mondayDate())
 
 	assert.Equal(t, dbTable.ClassList{{"数"}, {"语"}}, resolved[1].ClassList)
+}
+
+func TestApplyScheduleRules_TypePrecedence(t *testing.T) {
+	// 同一日期四种规则同时命中：应用顺序 COMPENSATION → TIMETABLE → SCHEDULE → ALL，后应用者覆盖前者
+	records := []dbTable.AutorunRecord{
+		makeRecord(dbTable.AutorunTypeCompensation, []string{"ALL"}, 1, map[string]interface{}{"date": "2025-10-13", "useDate": "2025-10-15"}),
+		makeRecord(dbTable.AutorunTypeTimetable, []string{"ALL"}, 1, map[string]interface{}{"date": "2025-10-13", "timetableId": "exam"}),
+		makeRecord(dbTable.AutorunTypeSchedule, []string{"ALL"}, 1, map[string]interface{}{
+			"date": "2025-10-13",
+			"schedule": map[string]interface{}{"periods": []interface{}{
+				map[string]interface{}{"no": 1, "subject": "班会"},
+				map[string]interface{}{"no": 2, "subject": "自习"},
+			}},
+		}),
+		makeRecord(dbTable.AutorunTypeAll, []string{"ALL"}, 1, map[string]interface{}{
+			"date":        "2025-10-13",
+			"timetableId": "常日",
+			"schedule": map[string]interface{}{"periods": []interface{}{
+				map[string]interface{}{"no": 1, "subject": "考试"},
+			}},
+		}),
+	}
+	resolved := ApplyScheduleRules(baseSchedule(), baseTimetable(), records, "s", "g", "c", mondayDate())
+
+	// ALL 最后应用覆盖前三种规则；FixWrongTimetable 按常日 2 节补齐占位
+	assert.Equal(t, "常日", resolved[1].Timetable)
+	assert.Equal(t, dbTable.ClassList{{"考试"}, {"课"}}, resolved[1].ClassList)
+}
+
+func TestCalcWeekNumber_SundayBoundary(t *testing.T) {
+	// 开学日恰逢周日：当天为第 1 周，7 天后进入第 2 周
+	start := time.Date(2025, 9, 7, 0, 0, 0, 0, time.UTC) // 2025-09-07 是周日
+	assert.Equal(t, 1, CalcWeekNumber("2025-09-07", start))
+	assert.Equal(t, 2, CalcWeekNumber("2025-09-07", start.Add(7*24*time.Hour)))
+}
+
+func TestApplyScheduleRules_TypePrecedence_Pairs(t *testing.T) {
+	// 不含 ALL 的相邻规则组合，分别验证 COMPENSATION / TIMETABLE / SCHEDULE 两两之间的应用顺序边界
+	t.Run("TIMETABLE 覆盖 COMPENSATION 的作息", func(t *testing.T) {
+		records := []dbTable.AutorunRecord{
+			makeRecord(dbTable.AutorunTypeCompensation, []string{"ALL"}, 1, map[string]interface{}{"date": "2025-10-13", "useDate": "2025-10-15"}),
+			makeRecord(dbTable.AutorunTypeTimetable, []string{"ALL"}, 1, map[string]interface{}{"date": "2025-10-13", "timetableId": "exam"}),
+		}
+		resolved := ApplyScheduleRules(baseSchedule(), baseTimetable(), records, "s", "g", "c", mondayDate())
+
+		// COMPENSATION 先拷入周三（空）课表，TIMETABLE 随后把作息改为 exam；exam 单节补“课”占位
+		assert.Equal(t, "exam", resolved[1].Timetable)
+		assert.Equal(t, dbTable.ClassList{{"课"}}, resolved[1].ClassList)
+	})
+
+	t.Run("SCHEDULE 覆盖 COMPENSATION 的课表", func(t *testing.T) {
+		records := []dbTable.AutorunRecord{
+			makeRecord(dbTable.AutorunTypeCompensation, []string{"ALL"}, 1, map[string]interface{}{"date": "2025-10-13", "useDate": "2025-10-15"}),
+			makeRecord(dbTable.AutorunTypeSchedule, []string{"ALL"}, 1, map[string]interface{}{
+				"date": "2025-10-13",
+				"schedule": map[string]interface{}{"periods": []interface{}{
+					map[string]interface{}{"no": 1, "subject": "班会"},
+					map[string]interface{}{"no": 2, "subject": "自习"},
+				}},
+			}),
+		}
+		resolved := ApplyScheduleRules(baseSchedule(), baseTimetable(), records, "s", "g", "c", mondayDate())
+
+		// SCHEDULE 后应用：若顺序颠倒，COMPENSATION 会把课表清回周三空课表，此处应保有班会/自习
+		assert.Equal(t, dbTable.ClassList{{"班会"}, {"自习"}}, resolved[1].ClassList)
+		assert.Equal(t, "常日", resolved[1].Timetable)
+	})
 }

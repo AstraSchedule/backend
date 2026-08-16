@@ -91,8 +91,8 @@ func TestMakeHashID(t *testing.T) {
 	params := map[string]interface{}{
 		"date": "2025-10-15",
 	}
-	hash1 := makeHashID(2, scope, 1, params)
-	hash2 := makeHashID(2, scope, 1, params)
+	hash1 := makeHashID(dbTable.AutorunTypeSchedule, scope, 1, params)
+	hash2 := makeHashID(dbTable.AutorunTypeSchedule, scope, 1, params)
 	assert.Equal(t, hash1, hash2)
 	assert.NotEmpty(t, hash1)
 }

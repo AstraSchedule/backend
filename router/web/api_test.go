@@ -234,6 +234,7 @@ func TestGetTimetableOptions_Contract(t *testing.T) {
 	w := doRequest(t, router, "GET", "/web/config/school1/grade1/timetable/options", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 	// 契约：options 为 [{label,value,need}]（usr-dashboard fetchTimetableOptions 依赖）
+	// need 语义：period 下标从 0 起，need = 最大下标 + 1（即所需课节行数）
 	var resp map[string]interface{}
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	options := resp["options"].([]interface{})
@@ -242,7 +243,7 @@ func TestGetTimetableOptions_Contract(t *testing.T) {
 	require.True(t, ok, "options 项应为对象")
 	assert.Equal(t, "常日", opt["label"])
 	assert.Equal(t, "常日", opt["value"])
-	assert.Equal(t, float64(1), opt["need"])
+	assert.Equal(t, float64(2), opt["need"], "两个节次(下标0/1)应得出 need=2")
 }
 
 func TestGetTimetable_Contract(t *testing.T) {
@@ -309,7 +310,7 @@ func TestGetAutorunStatus_Contract(t *testing.T) {
 	ensureTestDB()
 
 	db.GetDB().Save(&dbTable.AutorunRecord{
-		HashID: "contract-hash", EType: 0, Scope: []string{"ALL"}, Level: 1, Status: 0,
+		HashID: "contract-hash", EType: dbTable.AutorunTypeCompensation, Scope: []string{"ALL"}, Level: 1, Status: 0,
 		Parameters: map[string]interface{}{"rule": map[string]interface{}{"date": "2025-10-01", "useDate": "2025-09-29"}},
 	})
 
@@ -836,7 +837,7 @@ func TestPutCompensationRule_InvalidDate(t *testing.T) {
 	router.PUT("/web/autorun/compensation", PutCompensationRule)
 
 	body := map[string]interface{}{
-		"type": 0, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeCompensation, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "invalid", "useDate": "2025-09-29"},
 	}
 	w := doRequest(t, router, "PUT", "/web/autorun/compensation", body)
@@ -852,7 +853,7 @@ func TestPutCompensationRule_Success(t *testing.T) {
 	router.GET("/web/autorun", GetAutorunStatus)
 
 	body := map[string]interface{}{
-		"type": 0, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeCompensation, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-10-01", "useDate": "2025-09-29"},
 	}
 	w := doRequest(t, router, "PUT", "/web/autorun/compensation", body)
@@ -890,14 +891,20 @@ func TestPutTimetableRule_Success(t *testing.T) {
 
 	router := setupTestRouter()
 	router.PUT("/web/autorun/timetable", PutTimetableRule)
+	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
-		"type": 1, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeTimetable, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-10-08", "timetableId": "exam"},
 	}
 	w := doRequest(t, router, "PUT", "/web/autorun/timetable", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化
+	item := fetchAutorunDetail(t, router, w)
+	assert.Equal(t, "TIMETABLE", item["type"])
+	assert.Equal(t, "exam", autorunContent(t, item)["timetableId"])
 }
 
 func TestPutScheduleRule_MissingPeriods(t *testing.T) {
@@ -907,7 +914,7 @@ func TestPutScheduleRule_MissingPeriods(t *testing.T) {
 	router.PUT("/web/autorun/schedule", PutScheduleRule)
 
 	body := map[string]interface{}{
-		"type": 2, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeSchedule, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-10-09", "schedule": map[string]interface{}{}},
 	}
 	w := doRequest(t, router, "PUT", "/web/autorun/schedule", body)
@@ -920,9 +927,10 @@ func TestPutScheduleRule_Success(t *testing.T) {
 
 	router := setupTestRouter()
 	router.PUT("/web/autorun/schedule", PutScheduleRule)
+	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
-		"type": 2, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeSchedule, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{
 			"date":     "2025-10-09",
 			"schedule": map[string]interface{}{"periods": []interface{}{map[string]interface{}{"no": 1, "subject": "数"}}},
@@ -931,6 +939,19 @@ func TestPutScheduleRule_Success(t *testing.T) {
 	w := doRequest(t, router, "PUT", "/web/autorun/schedule", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化
+	item := fetchAutorunDetail(t, router, w)
+	assert.Equal(t, "SCHEDULE", item["type"])
+	schedule, ok := autorunContent(t, item)["schedule"].(map[string]interface{})
+	require.True(t, ok, "content.schedule 应为对象")
+	periods, ok := schedule["periods"].([]interface{})
+	require.True(t, ok, "periods 应为数组")
+	assert.Len(t, periods, 1)
+	p0, ok := periods[0].(map[string]interface{})
+	require.True(t, ok, "period 应为对象")
+	assert.Equal(t, float64(1), p0["no"])
+	assert.Equal(t, "数", p0["subject"])
 }
 
 func TestPutAllRule_Success(t *testing.T) {
@@ -938,9 +959,10 @@ func TestPutAllRule_Success(t *testing.T) {
 
 	router := setupTestRouter()
 	router.PUT("/web/autorun/all", PutAllRule)
+	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
-		"type": 3, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeAll, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{
 			"date":        "2025-10-10",
 			"timetableId": "exam",
@@ -950,6 +972,21 @@ func TestPutAllRule_Success(t *testing.T) {
 	w := doRequest(t, router, "PUT", "/web/autorun/all", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化
+	item := fetchAutorunDetail(t, router, w)
+	assert.Equal(t, "ALL", item["type"])
+	content := autorunContent(t, item)
+	assert.Equal(t, "exam", content["timetableId"])
+	schedule, ok := content["schedule"].(map[string]interface{})
+	require.True(t, ok, "content.schedule 应为对象")
+	periods, ok := schedule["periods"].([]interface{})
+	require.True(t, ok, "periods 应为数组")
+	assert.Len(t, periods, 1)
+	p0, ok := periods[0].(map[string]interface{})
+	require.True(t, ok, "period 应为对象")
+	assert.Equal(t, float64(1), p0["no"])
+	assert.Equal(t, "班会", p0["subject"])
 }
 
 func TestDeleteAutorunRecord_NotFound(t *testing.T) {
@@ -973,7 +1010,7 @@ func TestDeleteAutorunRecord_Success(t *testing.T) {
 	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
-		"type": 0, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeCompensation, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-11-01", "useDate": "2025-10-31"},
 	}
 	w := doRequest(t, router, "PUT", "/web/autorun/compensation", body)

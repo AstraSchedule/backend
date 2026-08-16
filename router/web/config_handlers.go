@@ -186,8 +186,8 @@ func GetTimetableOptions(c *gin.Context) {
 			if !ok {
 				continue
 			}
-			if i > need {
-				need = i
+			if i+1 > need {
+				need = i + 1
 			}
 		}
 		options = append(options, gin.H{"label": name, "value": name, "need": need})

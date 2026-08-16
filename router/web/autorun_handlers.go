@@ -57,13 +57,13 @@ func mapAutorunRecord(r dbTable.AutorunRecord) gin.H {
 
 	typeName := strconv.Itoa(r.EType)
 	switch r.EType {
-	case 0:
+	case dbTable.AutorunTypeCompensation:
 		typeName = "COMPENSATION"
-	case 1:
+	case dbTable.AutorunTypeTimetable:
 		typeName = "TIMETABLE"
-	case 2:
+	case dbTable.AutorunTypeSchedule:
 		typeName = "SCHEDULE"
-	case 3:
+	case dbTable.AutorunTypeAll:
 		typeName = "ALL"
 	}
 
