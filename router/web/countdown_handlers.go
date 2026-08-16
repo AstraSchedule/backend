@@ -148,11 +148,6 @@ func GetCountdownByID(c *gin.Context) {
 
 func PutCountdownRule(c *gin.Context) {
 	ns := middleware.GetNamespace(c)
-	claims := middleware.GetUserClaims(c)
-	if claims == nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"detail": "未认证"})
-		return
-	}
 
 	var payload countdownPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
@@ -160,16 +155,10 @@ func PutCountdownRule(c *gin.Context) {
 		return
 	}
 	scope := parseScopeInput(payload.Scope)
-	// 校验作用域权限
-	if claims.Role != "admin" {
-		for _, s := range scope {
-			if s == "ALL" {
-				continue
-			}
-			if !db.CheckScopePermission(&dbTable.User{Role: claims.Role, Scope: claims.Scope}, s, "", "") {
-				c.JSON(http.StatusForbidden, gin.H{"detail": "无权操作该作用域"})
-				return
-			}
+	// 作用域校验：同 autorun——非 admin 用户不能写超出自身 scope 的规则（含 ALL）
+	for _, s := range scope {
+		if !middleware.CheckUserScopeString(c, s) {
+			return
 		}
 	}
 	schedules := normalizeCountdownSchedules(payload.Schedules)
@@ -186,6 +175,13 @@ func PutCountdownRule(c *gin.Context) {
 	var oldScopes []string
 	if rows, err := db.FetchCountdownRecordsNs(ns, recordID); err == nil && len(rows) > 0 {
 		oldScopes = rows[0].Scope
+	}
+	// 更新已有记录时，旧作用域同样必须在本用户权限内：防止小权限用户借 recordID
+	// 覆盖包含无权作用域的记录（新作用域已在前面校验过）
+	for _, s := range oldScopes {
+		if !middleware.CheckUserScopeString(c, s) {
+			return
+		}
 	}
 	record := dbTable.CountdownRecord{
 		ID:        recordID,
