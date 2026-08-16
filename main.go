@@ -64,8 +64,8 @@ func buildRouter() *gin.Engine {
 	adminGroup.PUT("/web/users/:id", web.UpdateUser)
 	adminGroup.DELETE("/web/users/:id", web.DeleteUser)
 
-	// 需 JWT + 密码验证的写接口
-	secureWrite := router.Group("/", middleware.AdminOrToken())
+	// 需 JWT + 密码验证的写接口（只读用户拒绝）
+	secureWrite := router.Group("/", middleware.JWTAndPassword())
 
 	router.GET("/", func(c *gin.Context) {
 		c.JSON(200, gin.H{

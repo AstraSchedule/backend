@@ -221,6 +221,11 @@ func TestRouteTable_AuthMatrix(t *testing.T) {
 			map[string]string{"username": "x1", "password": "test123", "role": "readonly"}, auth(readonlyToken))
 		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
+	t.Run("readonly 写接口被拒 403", func(t *testing.T) {
+		// 只读用户即使密码正确也不能通过写接口认证
+		w := contractRequest(t, router, "PUT", "/web/countdown", map[string]interface{}{}, authPwd(readonlyToken, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
 	t.Run("写接口缺密码被拒 401", func(t *testing.T) {
 		w := contractRequest(t, router, "PUT", "/web/countdown", map[string]interface{}{}, auth(adminToken))
 		assert.Equal(t, http.StatusUnauthorized, w.Code)

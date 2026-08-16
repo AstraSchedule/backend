@@ -133,36 +133,36 @@ func TestRequireRole_Allowed(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// AdminOrToken
+// JWTAndPassword
 
-func TestAdminOrToken_NoAuth(t *testing.T) {
+func TestJWTAndPassword_NoAuth(t *testing.T) {
 	setupMwEnv(t)
 	router := gin.New()
-	router.POST("/test", AdminOrToken(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+	router.POST("/test", JWTAndPassword(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	w := doMwRequest(router, "POST", "/test", "{}", nil)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestAdminOrToken_NoPassword(t *testing.T) {
+func TestJWTAndPassword_NoPassword(t *testing.T) {
 	setupMwEnv(t)
 	user := createMwUser(t, "mwadmin", "test123", "admin")
 	token := mwToken(t, user)
 
 	router := gin.New()
-	router.POST("/test", AdminOrToken(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+	router.POST("/test", JWTAndPassword(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	w := doMwRequest(router, "POST", "/test", "{}", map[string]string{"Authorization": "Bearer " + token})
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestAdminOrToken_WrongPassword(t *testing.T) {
+func TestJWTAndPassword_WrongPassword(t *testing.T) {
 	setupMwEnv(t)
 	user := createMwUser(t, "mwadmin", "test123", "admin")
 	token := mwToken(t, user)
 
 	router := gin.New()
-	router.POST("/test", AdminOrToken(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+	router.POST("/test", JWTAndPassword(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	w := doMwRequest(router, "POST", "/test", "{}", map[string]string{
 		"Authorization": "Bearer " + token, "X-Verify-Password": "wrong",
@@ -170,13 +170,13 @@ func TestAdminOrToken_WrongPassword(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestAdminOrToken_ValidPasswordHeader(t *testing.T) {
+func TestJWTAndPassword_ValidPasswordHeader(t *testing.T) {
 	setupMwEnv(t)
 	user := createMwUser(t, "mwadmin", "test123", "admin")
 	token := mwToken(t, user)
 
 	router := gin.New()
-	router.POST("/test", AdminOrToken(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+	router.POST("/test", JWTAndPassword(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
 	w := doMwRequest(router, "POST", "/test", "{}", map[string]string{
 		"Authorization": "Bearer " + token, "X-Verify-Password": "test123",
@@ -184,14 +184,29 @@ func TestAdminOrToken_ValidPasswordHeader(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestAdminOrToken_PasswordInBody(t *testing.T) {
+func TestJWTAndPassword_ReadonlyForbidden(t *testing.T) {
+	setupMwEnv(t)
+	user := createMwUser(t, "mwreadonlyuser", "test123", "readonly")
+	token := mwToken(t, user)
+
+	router := gin.New()
+	router.POST("/test", JWTAndPassword(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	// 只读用户即使密码正确也禁止写操作
+	w := doMwRequest(router, "POST", "/test", "{}", map[string]string{
+		"Authorization": "Bearer " + token, "X-Verify-Password": "test123",
+	})
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestJWTAndPassword_PasswordInBody(t *testing.T) {
 	setupMwEnv(t)
 	user := createMwUser(t, "mwbodyuser", "test123", "admin")
 	token := mwToken(t, user)
 
-	// 走完整 AdminOrToken 链：密码放在 JSON 请求体（中间件读取后必须完整回填 body 供后续 handler 使用）
+	// 走完整 JWTAndPassword 链：密码放在 JSON 请求体（中间件读取后必须完整回填 body 供后续 handler 使用）
 	router := gin.New()
-	router.POST("/test", AdminOrToken(), func(c *gin.Context) {
+	router.POST("/test", JWTAndPassword(), func(c *gin.Context) {
 		var body map[string]interface{}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"ok": false})
