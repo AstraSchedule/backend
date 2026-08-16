@@ -189,7 +189,7 @@ func TestAdminOrToken_PasswordInBody(t *testing.T) {
 	user := createMwUser(t, "mwbodyuser", "test123", "admin")
 	token := mwToken(t, user)
 
-	// 走完整 AdminOrToken 链：密码放在 JSON 请求体（中间件读取后必须回填 body 供后续 handler 使用）
+	// 走完整 AdminOrToken 链：密码放在 JSON 请求体（中间件读取后必须完整回填 body 供后续 handler 使用）
 	router := gin.New()
 	router.POST("/test", AdminOrToken(), func(c *gin.Context) {
 		var body map[string]interface{}
@@ -197,10 +197,15 @@ func TestAdminOrToken_PasswordInBody(t *testing.T) {
 			c.JSON(http.StatusBadRequest, gin.H{"ok": false})
 			return
 		}
+		// 密码字段与普通字段都必须可读，验证中间件回填的是完整请求体而非仅密码
+		if body["password"] != "test123" || body["note"] != "keep-me" {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "detail": "body 回填不完整"})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
-	w := doMwRequest(router, "POST", "/test", `{"password":"test123"}`, map[string]string{
+	w := doMwRequest(router, "POST", "/test", `{"password":"test123","note":"keep-me"}`, map[string]string{
 		"Authorization": "Bearer " + token,
 	})
 	assert.Equal(t, http.StatusOK, w.Code)

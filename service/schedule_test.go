@@ -354,3 +354,36 @@ func TestCalcWeekNumber_SundayBoundary(t *testing.T) {
 	assert.Equal(t, 1, CalcWeekNumber("2025-09-07", start))
 	assert.Equal(t, 2, CalcWeekNumber("2025-09-07", start.Add(7*24*time.Hour)))
 }
+
+func TestApplyScheduleRules_TypePrecedence_Pairs(t *testing.T) {
+	// 不含 ALL 的相邻规则组合，分别验证 COMPENSATION / TIMETABLE / SCHEDULE 两两之间的应用顺序边界
+	t.Run("TIMETABLE 覆盖 COMPENSATION 的作息", func(t *testing.T) {
+		records := []dbTable.AutorunRecord{
+			makeRecord(0, []string{"ALL"}, 1, map[string]interface{}{"date": "2025-10-13", "useDate": "2025-10-15"}),
+			makeRecord(1, []string{"ALL"}, 1, map[string]interface{}{"date": "2025-10-13", "timetableId": "exam"}),
+		}
+		resolved := ApplyScheduleRules(baseSchedule(), baseTimetable(), records, "s", "g", "c", mondayDate())
+
+		// COMPENSATION 先拷入周三（空）课表，TIMETABLE 随后把作息改为 exam；exam 单节补“课”占位
+		assert.Equal(t, "exam", resolved[1].Timetable)
+		assert.Equal(t, dbTable.ClassList{{"课"}}, resolved[1].ClassList)
+	})
+
+	t.Run("SCHEDULE 覆盖 COMPENSATION 的课表", func(t *testing.T) {
+		records := []dbTable.AutorunRecord{
+			makeRecord(0, []string{"ALL"}, 1, map[string]interface{}{"date": "2025-10-13", "useDate": "2025-10-15"}),
+			makeRecord(2, []string{"ALL"}, 1, map[string]interface{}{
+				"date": "2025-10-13",
+				"schedule": map[string]interface{}{"periods": []interface{}{
+					map[string]interface{}{"no": 1, "subject": "班会"},
+					map[string]interface{}{"no": 2, "subject": "自习"},
+				}},
+			}),
+		}
+		resolved := ApplyScheduleRules(baseSchedule(), baseTimetable(), records, "s", "g", "c", mondayDate())
+
+		// SCHEDULE 后应用：若顺序颠倒，COMPENSATION 会把课表清回周三空课表，此处应保有班会/自习
+		assert.Equal(t, dbTable.ClassList{{"班会"}, {"自习"}}, resolved[1].ClassList)
+		assert.Equal(t, "常日", resolved[1].Timetable)
+	})
+}

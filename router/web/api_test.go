@@ -948,6 +948,10 @@ func TestPutScheduleRule_Success(t *testing.T) {
 	periods, ok := schedule["periods"].([]interface{})
 	require.True(t, ok, "periods 应为数组")
 	assert.Len(t, periods, 1)
+	p0, ok := periods[0].(map[string]interface{})
+	require.True(t, ok, "period 应为对象")
+	assert.Equal(t, float64(1), p0["no"])
+	assert.Equal(t, "数", p0["subject"])
 }
 
 func TestPutAllRule_Success(t *testing.T) {
@@ -972,7 +976,17 @@ func TestPutAllRule_Success(t *testing.T) {
 	// 回读验证持久化
 	item := fetchAutorunDetail(t, router, w)
 	assert.Equal(t, "ALL", item["type"])
-	assert.Equal(t, "exam", autorunContent(t, item)["timetableId"])
+	content := autorunContent(t, item)
+	assert.Equal(t, "exam", content["timetableId"])
+	schedule, ok := content["schedule"].(map[string]interface{})
+	require.True(t, ok, "content.schedule 应为对象")
+	periods, ok := schedule["periods"].([]interface{})
+	require.True(t, ok, "periods 应为数组")
+	assert.Len(t, periods, 1)
+	p0, ok := periods[0].(map[string]interface{})
+	require.True(t, ok, "period 应为对象")
+	assert.Equal(t, float64(1), p0["no"])
+	assert.Equal(t, "班会", p0["subject"])
 }
 
 func TestDeleteAutorunRecord_NotFound(t *testing.T) {

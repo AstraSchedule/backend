@@ -366,11 +366,12 @@ func TestCreateUser_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	// 回读验证持久化
+	// 回读验证持久化：哈希必须由请求密码 "password123" 生成，而非任意非空值
 	var saved dbTable.User
 	assert.NoError(t, db.GetDB().Where("username = ?", "newuser").First(&saved).Error)
 	assert.Equal(t, "readonly", saved.Role)
 	assert.NotEmpty(t, saved.PasswordHash)
+	assert.True(t, service.CheckPassword("password123", saved.PasswordHash))
 }
 
 // UpdateUser tests
