@@ -421,3 +421,21 @@ func TestCheckUserScopeString_TooManySegmentsRejected(t *testing.T) {
 	assert.False(t, CheckUserScopeString(c, "s1/g1/c1/extra"))
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+func TestCheckUserScopeString_ALLPrefixedVariantsRejected(t *testing.T) {
+	setupMwEnv(t)
+	// school_w 且 Scope=="ALL"：精确 "ALL" 已被角色检查拒绝，
+	// 带后缀的变体（ALL/g1/c1、ALL/）同样必须拒绝，防止借首段匹配绕过
+	user := createMwUserScoped(t, "scopewallv", "test123", "school_w", "ALL")
+	token := mwToken(t, user)
+	claims, err := service.ParseToken(model.Configs.Secret.Token, token)
+	require.NoError(t, err)
+
+	for _, variant := range []string{"ALL/g1/c1", "ALL/"} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Set(UserClaimsKey, claims)
+		assert.False(t, CheckUserScopeString(c, variant), "应拒绝变体: "+variant)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	}
+}
