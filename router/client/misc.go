@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -23,6 +24,9 @@ type wsScope struct {
 type wsHub struct {
 	mu      sync.RWMutex
 	clients map[wsScope]map[*websocket.Conn]string // conn -> classNumber
+	// 每个连接一把写锁：gorilla/websocket 不允许并发调用写方法，
+	// 并发广播必须逐连接串行化，否则会 panic("concurrent write to websocket connection")
+	writeLocks sync.Map // *websocket.Conn -> *sync.Mutex
 }
 
 var clientWsHub = &wsHub{
@@ -122,6 +126,9 @@ func (h *wsHub) onlineClasses(namespace string) map[string]bool {
 	return out
 }
 
+// wsWriteTimeout 单条 WebSocket 消息的写入截止时间，防止慢客户端拖垮广播（进而阻塞写接口响应）
+const wsWriteTimeout = 5 * time.Second
+
 func (h *wsHub) broadcast(scope wsScope, message string) int {
 	conns := h.snapshot(scope)
 	if len(conns) == 0 {
@@ -129,7 +136,14 @@ func (h *wsHub) broadcast(scope wsScope, message string) int {
 	}
 	sent := 0
 	for _, conn := range conns {
-		if err := conn.WriteMessage(websocket.TextMessage, []byte(message)); err != nil {
+		lockVal, _ := h.writeLocks.LoadOrStore(conn, &sync.Mutex{})
+		lock := lockVal.(*sync.Mutex)
+		lock.Lock()
+		_ = conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
+		err := conn.WriteMessage(websocket.TextMessage, []byte(message))
+		_ = conn.SetWriteDeadline(time.Time{})
+		lock.Unlock()
+		if err != nil {
 			logrus.Warnf("WebSocket 广播失败，将移除连接：scope=%s/%s err=%v", scope.School, scope.Grade, err)
 			h.remove(scope, conn)
 			_ = conn.Close()
@@ -140,33 +154,50 @@ func (h *wsHub) broadcast(scope wsScope, message string) int {
 	return sent
 }
 
-func BroadcastSyncConfig(c *gin.Context) {
-	ns := middleware.GetNamespace(c)
-	school := c.Param("school")
-	grade := c.Param("grade")
-	classNumber := c.Param("class_number")
+// broadcastWhere 向匹配条件的所有 scope 广播消息，返回成功发送条数。
+func (h *wsHub) broadcastWhere(match func(wsScope) bool, message string) int {
+	h.mu.RLock()
+	scopes := make([]wsScope, 0, len(h.clients))
+	for s := range h.clients {
+		if match(s) {
+			scopes = append(scopes, s)
+		}
+	}
+	h.mu.RUnlock()
+
+	sent := 0
+	for _, s := range scopes {
+		sent += h.broadcast(s, message)
+	}
+	return sent
+}
+
+// BroadcastSync 在指定租户 namespace 内通知学校/年级的在线客户端刷新配置
+// （仅供后端写操作内部调用，外部 /api/broadcast 入口已废弃移除）。
+// serverless 模式（WebSocket 禁用）下直接返回 0。
+func BroadcastSync(namespace, school, grade string) int {
 	if !model.Configs.WebSocketEnabled() {
-		logrus.Infof("收到广播请求：%s 学校 %s 级 %s 班，但当前配置禁用 WebSocket（serverless=true）", school, grade, classNumber)
-		c.JSON(http.StatusOK, gin.H{
-			"status":            200,
-			"message":           "SyncConfig",
-			"sent":              0,
-			"websocket_enabled": false,
-		})
-		return
+		return 0
 	}
-	scope := wsScope{Namespace: ns, School: school, Grade: grade}
-	sent := clientWsHub.broadcast(scope, "SyncConfig")
-	logrus.Infof("收到广播请求：%s 学校 %s 级 %s 班，已广播 SyncConfig，成功发送 %d 条", school, grade, classNumber, sent)
-	if sent == 0 {
-		logrus.Warnf("未找到可用 websocket 连接：%s %s", school, grade)
+	sent := clientWsHub.broadcast(wsScope{Namespace: namespace, School: school, Grade: grade}, "SyncConfig")
+	logrus.Infof("内部广播 SyncConfig：ns=%s %s 学校 %s 级，成功发送 %d 条", namespace, school, grade, sent)
+	return sent
+}
+
+// BroadcastSyncSchool 在指定租户 namespace 内通知学校的全部在线客户端刷新配置。
+func BroadcastSyncSchool(namespace, school string) int {
+	if !model.Configs.WebSocketEnabled() {
+		return 0
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"status":            200,
-		"message":           "SyncConfig",
-		"sent":              sent,
-		"websocket_enabled": true,
-	})
+	return clientWsHub.broadcastWhere(func(s wsScope) bool { return s.Namespace == namespace && s.School == school }, "SyncConfig")
+}
+
+// BroadcastSyncAll 在指定租户 namespace 内通知所有在线客户端刷新配置（备份导入等全量数据变更）。
+func BroadcastSyncAll(namespace string) int {
+	if !model.Configs.WebSocketEnabled() {
+		return 0
+	}
+	return clientWsHub.broadcastWhere(func(s wsScope) bool { return s.Namespace == namespace }, "SyncConfig")
 }
 
 func WebSocketPlaceholder(c *gin.Context) {

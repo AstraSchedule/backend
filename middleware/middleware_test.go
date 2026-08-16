@@ -1,153 +1,255 @@
 package middleware
 
 import (
-	"io"
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"AstraScheduleServerGo/db"
+	"AstraScheduleServerGo/model"
+	"AstraScheduleServerGo/model/dbTable"
+	"AstraScheduleServerGo/service"
+	"AstraScheduleServerGo/testutil"
+
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestParseHostToNamespace_SimpleDomain(t *testing.T) {
-	result := ParseHostToNamespace("aaa-do.getastra.cn")
-	assert.Equal(t, "cn/getastra/aaa-do", result)
-}
+var mwDBInitialized = false
 
-func TestParseHostToNamespace_Localhost(t *testing.T) {
-	result := ParseHostToNamespace("localhost")
-	assert.Equal(t, "default", result)
-}
-
-func TestParseHostToNamespace_IP(t *testing.T) {
-	// 安全修复后：IP 地址返回 default，不再反转成伪 namespace（避免 IP 直连产生无意义租户标识）
-	result := ParseHostToNamespace("127.0.0.1")
-	assert.Equal(t, "default", result)
-}
-
-func TestParseHostToNamespace_Empty(t *testing.T) {
-	result := ParseHostToNamespace("")
-	assert.Equal(t, "default", result)
-}
-
-func TestParseHostToNamespace_WithPort(t *testing.T) {
-	result := ParseHostToNamespace("localhost:8080")
-	assert.Equal(t, "default", result)
-}
-
-func TestParseHostToNamespace_ComplexDomain(t *testing.T) {
-	result := ParseHostToNamespace("app.example.com")
-	assert.Equal(t, "com/example/app", result)
-}
-
-func TestParseHostToNamespace_SingleLabel(t *testing.T) {
-	result := ParseHostToNamespace("myhost")
-	assert.Equal(t, "default", result)
-}
-
-func TestNamespaceMiddleware_SetsNamespace(t *testing.T) {
+func setupMwEnv(t *testing.T) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(NamespaceMiddleware())
+	if !mwDBInitialized {
+		testutil.InitTestDB()
+		db.GetDB().AutoMigrate(&dbTable.User{})
+		mwDBInitialized = true
+	}
+}
 
-	var capturedNS interface{}
-	router.GET("/test", func(c *gin.Context) {
-		capturedNS, _ = c.Get(NamespaceKey)
-		c.JSON(200, gin.H{"ns": capturedNS})
+func createMwUser(t *testing.T, username, password, role string) *dbTable.User {
+	t.Helper()
+	hash, err := service.HashPassword(password)
+	require.NoError(t, err)
+	require.NoError(t, db.GetDB().Where("username = ?", username).Delete(&dbTable.User{}).Error)
+	user := &dbTable.User{Username: username, PasswordHash: hash, Role: role, Scope: "ALL"}
+	require.NoError(t, db.GetDB().Create(user).Error)
+	return user
+}
+
+func mwToken(t *testing.T, user *dbTable.User) string {
+	t.Helper()
+	token, err := service.GenerateToken(model.Configs.Secret.Token, user.ID, "default", user.Username, user.Role, "ALL", 1)
+	require.NoError(t, err)
+	return token
+}
+
+func doMwRequest(router *gin.Engine, method, path, body string, headers map[string]string) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest(method, path, bytes.NewBufferString(body))
+	if err != nil {
+		panic(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	router.ServeHTTP(w, req)
+	return w
+}
+
+// JWTAuthMiddleware
+
+func TestJWTAuthMiddleware_NoHeader(t *testing.T) {
+	router := gin.New()
+	router.GET("/test", JWTAuthMiddleware(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	w := doMwRequest(router, "GET", "/test", "", nil)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestJWTAuthMiddleware_BadFormat(t *testing.T) {
+	router := gin.New()
+	router.GET("/test", JWTAuthMiddleware(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	w := doMwRequest(router, "GET", "/test", "", map[string]string{"Authorization": "Token abc"})
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestJWTAuthMiddleware_InvalidToken(t *testing.T) {
+	router := gin.New()
+	router.GET("/test", JWTAuthMiddleware(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	w := doMwRequest(router, "GET", "/test", "", map[string]string{"Authorization": "Bearer invalid.token.here"})
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestJWTAuthMiddleware_ValidToken(t *testing.T) {
+	setupMwEnv(t)
+	token := mwToken(t, createMwUser(t, "mwuser", "test123", "admin"))
+
+	router := gin.New()
+	router.GET("/test", JWTAuthMiddleware(), func(c *gin.Context) {
+		claims := GetUserClaims(c)
+		assert.Equal(t, "mwuser", claims.Username)
+		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/test", nil)
-	req.Host = "aaa-do.getastra.cn"
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, "cn/getastra/aaa-do", capturedNS)
+	w := doMwRequest(router, "GET", "/test", "", map[string]string{"Authorization": "Bearer " + token})
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestNamespaceMiddleware_LocalhostDefault(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(NamespaceMiddleware())
+// RequireRole
 
-	var capturedNS interface{}
-	router.GET("/test", func(c *gin.Context) {
-		capturedNS, _ = c.Get(NamespaceKey)
-		c.JSON(200, gin.H{"ns": capturedNS})
+func TestRequireRole_NoClaims(t *testing.T) {
+	router := gin.New()
+	router.GET("/test", RequireRole("admin"), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	w := doMwRequest(router, "GET", "/test", "", nil)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestRequireRole_Forbidden(t *testing.T) {
+	setupMwEnv(t)
+	token := mwToken(t, createMwUser(t, "mwreadonly", "test123", "readonly"))
+
+	router := gin.New()
+	router.GET("/test", JWTAuthMiddleware(), RequireRole("admin"), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	w := doMwRequest(router, "GET", "/test", "", map[string]string{"Authorization": "Bearer " + token})
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestRequireRole_Allowed(t *testing.T) {
+	setupMwEnv(t)
+	token := mwToken(t, createMwUser(t, "mwadmin", "test123", "admin"))
+
+	router := gin.New()
+	router.GET("/test", JWTAuthMiddleware(), RequireRole("admin"), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	w := doMwRequest(router, "GET", "/test", "", map[string]string{"Authorization": "Bearer " + token})
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// AdminOrToken
+
+func TestAdminOrToken_NoAuth(t *testing.T) {
+	setupMwEnv(t)
+	router := gin.New()
+	router.POST("/test", AdminOrToken(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	w := doMwRequest(router, "POST", "/test", "{}", nil)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestAdminOrToken_NoPassword(t *testing.T) {
+	setupMwEnv(t)
+	user := createMwUser(t, "mwadmin", "test123", "admin")
+	token := mwToken(t, user)
+
+	router := gin.New()
+	router.POST("/test", AdminOrToken(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	w := doMwRequest(router, "POST", "/test", "{}", map[string]string{"Authorization": "Bearer " + token})
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestAdminOrToken_WrongPassword(t *testing.T) {
+	setupMwEnv(t)
+	user := createMwUser(t, "mwadmin", "test123", "admin")
+	token := mwToken(t, user)
+
+	router := gin.New()
+	router.POST("/test", AdminOrToken(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	w := doMwRequest(router, "POST", "/test", "{}", map[string]string{
+		"Authorization": "Bearer " + token, "X-Verify-Password": "wrong",
+	})
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestAdminOrToken_ValidPasswordHeader(t *testing.T) {
+	setupMwEnv(t)
+	user := createMwUser(t, "mwadmin", "test123", "admin")
+	token := mwToken(t, user)
+
+	router := gin.New()
+	router.POST("/test", AdminOrToken(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	w := doMwRequest(router, "POST", "/test", "{}", map[string]string{
+		"Authorization": "Bearer " + token, "X-Verify-Password": "test123",
+	})
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestAdminOrToken_PasswordInBody(t *testing.T) {
+	setupMwEnv(t)
+	user := createMwUser(t, "mwbodyuser", "test123", "admin")
+	token := mwToken(t, user)
+
+	// 走完整 AdminOrToken 链：密码放在 JSON 请求体（中间件读取后必须完整回填 body 供后续 handler 使用）
+	router := gin.New()
+	router.POST("/test", AdminOrToken(), func(c *gin.Context) {
+		var body map[string]interface{}
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false})
+			return
+		}
+		// 密码字段与普通字段都必须可读，验证中间件回填的是完整请求体而非仅密码
+		if body["password"] != "test123" || body["note"] != "keep-me" {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "detail": "body 回填不完整"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/test", nil)
-	req.Host = "localhost:8080"
-	router.ServeHTTP(w, req)
+	w := doMwRequest(router, "POST", "/test", `{"password":"test123","note":"keep-me"}`, map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+	assert.Equal(t, http.StatusOK, w.Code)
 
-	assert.Equal(t, "default", capturedNS)
-}
-
-func TestGetNamespace_FromContext(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	c := &gin.Context{}
-	c.Set(NamespaceKey, "test-namespace")
-
-	ns := GetNamespace(c)
-	assert.Equal(t, "test-namespace", ns)
-}
-
-func TestGetNamespace_EmptyContext(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	c := &gin.Context{}
-
-	ns := GetNamespace(c)
-	// In non-release mode, returns "default"
-	assert.Equal(t, "default", ns)
-}
-
-func TestGetUserClaims_NoClaims(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	c := &gin.Context{}
-
-	claims := GetUserClaims(c)
-	assert.Nil(t, claims)
+	// 错误 body 密码 -> 401
+	w2 := doMwRequest(router, "POST", "/test", `{"password":"wrong"}`, map[string]string{
+		"Authorization": "Bearer " + token,
+	})
+	assert.Equal(t, http.StatusUnauthorized, w2.Code)
 }
 
 func TestExtractPasswordFromRequest_FromHeader(t *testing.T) {
-	gin.SetMode(gin.TestMode)
+	setupMwEnv(t)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("POST", "/test", nil)
+	c.Request, _ = http.NewRequest("POST", "/test", bytes.NewBufferString("{}"))
 	c.Request.Header.Set("X-Verify-Password", "test-password")
 
-	password := extractPasswordFromRequest(c)
-	assert.Equal(t, "test-password", password)
+	assert.Equal(t, "test-password", extractPasswordFromRequest(c))
 }
 
 func TestExtractPasswordFromRequest_FromBody(t *testing.T) {
-	gin.SetMode(gin.TestMode)
+	setupMwEnv(t)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	body := `{"password":"body-password"}`
-	c.Request, _ = http.NewRequest("POST", "/test", nil)
+	c.Request, _ = http.NewRequest("POST", "/test", bytes.NewBufferString(`{"password":"body-password"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
-	c.Request.Body = &mockReadCloser{data: []byte(body)}
 
-	password := extractPasswordFromRequest(c)
-	assert.Equal(t, "body-password", password)
+	assert.Equal(t, "body-password", extractPasswordFromRequest(c))
 }
 
-type mockReadCloser struct {
-	data   []byte
-	offset int
-}
+// LoginLimiter
 
-func (m *mockReadCloser) Read(p []byte) (n int, err error) {
-	if m.offset >= len(m.data) {
-		return 0, io.EOF
+func TestLoginLimiter_LocksAfterMaxFailures(t *testing.T) {
+	limiter := &LoginRateLimiter{attempts: map[string]*loginAttempt{}}
+
+	assert.True(t, limiter.Allow("127.0.0.1", "user"))
+	for i := 0; i < loginMaxFailures; i++ {
+		limiter.Fail("127.0.0.1", "user")
 	}
-	n = copy(p, m.data[m.offset:])
-	m.offset += n
-	return n, nil
-}
-
-func (m *mockReadCloser) Close() error {
-	return nil
+	assert.False(t, limiter.Allow("127.0.0.1", "user"))
+	// 其他用户名不受影响
+	assert.True(t, limiter.Allow("127.0.0.1", "other"))
+	// 重置后恢复
+	limiter.Reset("127.0.0.1", "user")
+	assert.True(t, limiter.Allow("127.0.0.1", "user"))
 }

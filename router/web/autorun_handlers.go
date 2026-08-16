@@ -56,12 +56,19 @@ func persistAutorunRule(c *gin.Context, payload autorunPayload, params map[strin
 	if hashID == "" {
 		hashID = makeHashID(ns, payload.Type, scope, payload.Priority, params)
 	}
+	// 更新前取回旧作用域：scope 变更时，旧作用域的客户端同样需要刷新通知
+	var oldScopes []string
+	if rows, err := db.FetchAutorunRecordsNs(ns, hashID); err == nil && len(rows) > 0 {
+		oldScopes = rows[0].Scope
+	}
 	record := dbTable.AutorunRecord{HashID: hashID, Namespace: ns, EType: payload.Type, Scope: scope, Parameters: params, Level: payload.Priority, Status: 0}
 	if err := db.UpsertAutorunRecord(&record); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	_, _ = db.RefreshAutorunStatusesNs(ns, time.Now())
+	// 规则变更影响课表解析，按新旧作用域并集广播刷新
+	broadcastScopes(ns, mergeScopes(oldScopes, scope))
 	c.JSON(http.StatusOK, gin.H{"status": 200, "id": hashID})
 }
 
@@ -77,13 +84,13 @@ func mapAutorunRecord(r dbTable.AutorunRecord) gin.H {
 
 	typeName := strconv.Itoa(r.EType)
 	switch r.EType {
-	case 0:
+	case dbTable.AutorunTypeCompensation:
 		typeName = "COMPENSATION"
-	case 1:
+	case dbTable.AutorunTypeTimetable:
 		typeName = "TIMETABLE"
-	case 2:
+	case dbTable.AutorunTypeSchedule:
 		typeName = "SCHEDULE"
-	case 3:
+	case dbTable.AutorunTypeAll:
 		typeName = "ALL"
 	}
 
@@ -141,6 +148,11 @@ func GetAutorunHashStatus(c *gin.Context) {
 func DeleteAutorunRecord(c *gin.Context) {
 	ns := middleware.GetNamespace(c)
 	hashid := c.Param("hashid")
+	// 删除前取回规则作用域，删除后按原作用域广播刷新
+	var scopes []string
+	if rows, err := db.FetchAutorunRecordsNs(ns, hashid); err == nil && len(rows) > 0 {
+		scopes = rows[0].Scope
+	}
 	affected, err := db.DeleteAutorunRecordNs(ns, hashid)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -151,6 +163,7 @@ func DeleteAutorunRecord(c *gin.Context) {
 		return
 	}
 	_, _ = db.RefreshAutorunStatusesNs(ns, time.Now())
+	broadcastScopes(ns, scopes)
 	c.JSON(http.StatusOK, gin.H{"status": 200, "deleted": affected, "id": hashid})
 }
 

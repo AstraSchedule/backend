@@ -21,6 +21,18 @@ func main() {
 
 	logrus.Infof("程序初始化流程结束，即将启动 HTTP 服务：%+v", model.Configs)
 
+	router := buildRouter()
+
+	err := router.Run(fmt.Sprintf("%s:%d", model.Configs.Server.Host, model.Configs.Server.Port))
+	if err != nil {
+		logrus.Fatal(err.Error())
+		return
+	}
+}
+
+// buildRouter 组装完整的路由与中间件链，供 main 启动与契约回归测试共用。
+// 任何对路由表、路径或认证中间件的误改都应由 main_test.go 的契约测试捕获。
+func buildRouter() *gin.Engine {
 	router := gin.Default()
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:     model.Configs.Server.Domain,
@@ -53,7 +65,7 @@ func main() {
 	adminGroup.PUT("/web/users/:id", web.UpdateUser)
 	adminGroup.DELETE("/web/users/:id", web.DeleteUser)
 
-	// 管理员或密码验证可操作的写接口
+	// 需 JWT + 密码验证的写接口
 	secureWrite := router.Group("/", middleware.AdminOrToken())
 
 	// 内部服务间调用（仅需 API 密钥）
@@ -65,7 +77,7 @@ func main() {
 		})
 	})
 
-	// 完整更新课表（兼容 BasicAuth 客户端）
+	// 完整更新课表（需 JWT + 密码验证）
 	secureWrite.PUT("/:school/:grade/:class", middleware.RequireScope(), client.PutSchedule)
 	// 获取完整课表
 	router.GET("/:school/:grade/:class", client.GetSchedule)
@@ -77,8 +89,7 @@ func main() {
 	router.GET("/api/weather/", client.GetWeatherWithCFHeader)
 	// WebSocket
 	router.Any("/ws/:school/:grade/:class_number", client.WebSocketPlaceholder)
-	// 广播
-	secureWrite.POST("/api/broadcast/:school/:grade/:class_number", middleware.RequireScope(), client.BroadcastSyncConfig)
+	// 注意：/api/broadcast 外部广播入口已废弃移除，广播仅由后端写操作内部触发（client.BroadcastSync*）
 
 	// 菜单/结构（读接口，与既有模式一致）；statistic 需 JWT 认证（防跨租户泄露）
 	router.GET("/web/menu", web.GetMenu)
@@ -136,7 +147,7 @@ func main() {
 	// 按日期出课节
 	router.GET("/web/schedule/by-date", web.GetScheduleByDate)
 
-	// Admin: DROP table (仅内部调用，需内部 API 密钥)
+	// Admin: DROP table（仅内部调用，需内部 API 密钥）
 	internalWrite.DELETE("/web/admin/drop-table/:table", web.DropAstraTable)
 	// 注册新租户（需注册令牌认证）
 	regAuth := router.Group("/", middleware.RegTokenAuth())
@@ -145,9 +156,5 @@ func main() {
 	// 检查子域名是否已存在（仅内部调用）
 	internalWrite.GET("/web/admin/check-subdomain/:subdomain", web.CheckSubdomainInternal)
 
-	err := router.Run(fmt.Sprintf("%s:%d", model.Configs.Server.Host, model.Configs.Server.Port))
-	if err != nil {
-		logrus.Fatal(err.Error())
-		return
-	}
+	return router
 }

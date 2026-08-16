@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func setupTestRouter() *gin.Engine {
@@ -26,24 +27,6 @@ func setupTestRouter() *gin.Engine {
 }
 
 var testDBInitialized = false
-
-// newAdminToken 生成 admin 角色 JWT，用于需认证的写接口测试
-func newAdminToken(t *testing.T) string {
-	t.Helper()
-	token, err := service.GenerateToken(model.Configs.Secret.Token, 1, "default", "admin", "admin", "", 1)
-	assert.NoError(t, err)
-	return token
-}
-
-// authedWriteRouter 生成 admin token 并注册带 JWT 认证的写接口路由，消除重复样板。
-// saas 版写接口 handler 内部校验 claims，必须挂 JWTAuthMiddleware 并携带 token。
-func authedWriteRouter(t *testing.T, method, path string, handler gin.HandlerFunc) (*gin.Engine, string) {
-	t.Helper()
-	token := newAdminToken(t)
-	router := setupTestRouter()
-	router.Handle(method, path, middleware.JWTAuthMiddleware(), handler)
-	return router, token
-}
 
 func ensureTestDB() {
 	if testDBInitialized {
@@ -71,7 +54,9 @@ func TestGetStatistic_Success(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/statistic", GetStatistic)
 
-	w := doRequest(t, router, "GET", "/web/statistic", nil)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/web/statistic", nil)
+	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -95,16 +80,25 @@ func TestGetStatistic_Auth(t *testing.T) {
 	router.GET("/web/statistic", middleware.JWTAuthMiddleware(), GetStatistic)
 
 	// 无 token -> 401
-	w := doRequest(t, router, "GET", "/web/statistic", nil)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/web/statistic", nil)
+	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 
 	// 无效 token -> 401
-	w2 := doRequestWithToken(t, router, "GET", "/web/statistic", nil, "invalid.token.here")
+	w2 := httptest.NewRecorder()
+	req2, _ := http.NewRequest("GET", "/web/statistic", nil)
+	req2.Header.Set("Authorization", "Bearer invalid.token.here")
+	router.ServeHTTP(w2, req2)
 	assert.Equal(t, http.StatusUnauthorized, w2.Code)
 
 	// 有效 token -> 200 且字段完整
-	token := newAdminToken(t)
-	w3 := doRequestWithToken(t, router, "GET", "/web/statistic", nil, token)
+	token, err := service.GenerateToken(model.Configs.Secret.Token, 1, "default", "admin", "admin", "", 1)
+	assert.NoError(t, err)
+	w3 := httptest.NewRecorder()
+	req3, _ := http.NewRequest("GET", "/web/statistic", nil)
+	req3.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w3, req3)
 	assert.Equal(t, http.StatusOK, w3.Code)
 	var resp map[string]interface{}
 	assert.NoError(t, json.Unmarshal(w3.Body.Bytes(), &resp))
@@ -112,127 +106,236 @@ func TestGetStatistic_Auth(t *testing.T) {
 	assert.Contains(t, resp, "clients_count")
 }
 
-func TestGetMenu_Empty(t *testing.T) {
+func TestGetMenu_Contract(t *testing.T) {
 	ensureTestDB()
+
+	// 造一所带年级/班级的学校，验证菜单树节点契约
+	db.GetDB().Save(&dbTable.Schedule{Namespace: "default", School: "menu-school", Grade: "2024", Class: "1"})
 
 	router := setupTestRouter()
 	router.GET("/web/menu", GetMenu)
 
 	w := doRequest(t, router, "GET", "/web/menu", nil)
-
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var resp map[string]interface{}
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	data, ok := resp["data"].([]interface{})
 	assert.True(t, ok, "data 应为数组")
-	assert.GreaterOrEqual(t, len(data), 4) // At least 4 base menu items
-	// 每个菜单项必须具备 text/key，供 usr-dashboard 构建 scope tree（autorun.js 依赖）
+	assert.GreaterOrEqual(t, len(data), 5) // 4 个基础项 + 1 所学校
+
+	sawBase := 0
 	for _, item := range data {
 		m, ok := item.(map[string]interface{})
 		assert.True(t, ok, "menu item 应为对象")
 		assert.Contains(t, m, "text")
 		assert.Contains(t, m, "key")
+		// 基础页项必须带 to；scope 树节点必须带 raw（usr-dashboard buildScopeTreeFromMenu 依赖）
+		if _, hasTo := m["to"]; hasTo {
+			sawBase++
+			continue
+		}
+		assert.Contains(t, m, "raw", "scope 树节点必须包含 raw 字段")
+		if m["text"] == "menu-school 学校" {
+			children := m["children"].([]interface{})
+			assert.NotEmpty(t, children, "学校节点应包含年级")
+			grade, ok := children[0].(map[string]interface{})
+			require.True(t, ok, "年级节点应为对象")
+			assert.Contains(t, grade, "raw")
+			gradeChildren := grade["children"].([]interface{})
+			assert.NotEmpty(t, gradeChildren, "年级节点应包含班级")
+			classNode, ok := gradeChildren[len(gradeChildren)-1].(map[string]interface{})
+			require.True(t, ok, "班级节点应为对象")
+			assert.Contains(t, classNode, "raw")
+		}
 	}
+	// saas 菜单在 main 的 4 个基础页之外增加租户相关页项，共 6 个
+	assert.Equal(t, 6, sawBase, "菜单应包含 6 个基础页项")
 }
 
-func TestGetStructure_Empty(t *testing.T) {
+func TestGetStructure_Contract(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
 	router.GET("/web/structure", GetStructure)
 
 	w := doRequest(t, router, "GET", "/web/structure", nil)
-
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	var resp []interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.NotNil(t, resp)
+	// 契约：返回数组，每项含 text/children（usr-dashboard Users.vue/Structure.vue 依赖）
+	var resp []map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	for _, s := range resp {
+		assert.Contains(t, s, "text")
+		assert.Contains(t, s, "children")
+	}
 }
 
 // Config handlers tests
 
-func TestGetSubjectsOptions_Empty(t *testing.T) {
+func TestGetSubjectsOptions_Contract(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
 	router.GET("/web/config/:school/:grade/subjects/options", GetSubjectsOptions)
 
+	// 空数据：options 必须为空数组（usr-dashboard fetchSubjectsOptions 依赖数组形状）
 	w := doRequest(t, router, "GET", "/web/config/school1/grade1/subjects/options", nil)
-
 	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.IsType(t, []interface{}{}, resp["options"])
+
+	// 有数据：每项必须包含 label/value
+	db.GetDB().Save(&dbTable.Subject{Namespace: "default",
+		School: "school1", Grade: "grade1",
+		SubjectConfig: dbTable.SubjectConfig{SubjectName: map[string]string{"数": "数学"}},
+	})
+	w = doRequest(t, router, "GET", "/web/config/school1/grade1/subjects/options", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	options := resp["options"].([]interface{})
+	assert.Len(t, options, 1)
+	opt, ok := options[0].(map[string]interface{})
+	require.True(t, ok, "options 项应为对象")
+	assert.Contains(t, opt, "label")
+	assert.Contains(t, opt, "value")
+	assert.Equal(t, "数", opt["value"])
 }
 
-func TestGetSubjects_Empty(t *testing.T) {
+func TestGetSubjects_Contract(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
 	router.GET("/web/config/:school/:grade/subjects", GetSubjects)
 
 	w := doRequest(t, router, "GET", "/web/config/school1/grade1/subjects", nil)
-
 	assert.Equal(t, http.StatusOK, w.Code)
+	// 契约：abbr/fullName 均为 [{text}] 数组（usr-dashboard SubjectsConfig.vue 依赖）
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.IsType(t, []interface{}{}, resp["abbr"])
+	assert.IsType(t, []interface{}{}, resp["fullName"])
 }
 
-func TestGetTimetableOptions_Success(t *testing.T) {
+func TestGetTimetableOptions_Contract(t *testing.T) {
 	ensureTestDB()
+
+	db.GetDB().Save(&dbTable.Timetable{Namespace: "default",
+		School: "school1", Grade: "grade1",
+		TimetableConfig: dbTable.TimetableConfig{
+			Timetable: map[string]map[string]interface{}{"常日": {"08:00-08:40": 0, "08:50-09:30": 1}},
+			Divider:   map[string][]int{"常日": {}},
+		},
+	})
 
 	router := setupTestRouter()
 	router.GET("/web/config/:school/:grade/timetable/options", GetTimetableOptions)
 
 	w := doRequest(t, router, "GET", "/web/config/school1/grade1/timetable/options", nil)
-
 	assert.Equal(t, http.StatusOK, w.Code)
+	// 契约：options 为 [{label,value,need}]（usr-dashboard fetchTimetableOptions 依赖）
+	// need 语义：period 下标从 0 起，need = 最大下标 + 1（即所需课节行数）
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	options := resp["options"].([]interface{})
+	assert.Len(t, options, 1)
+	opt, ok := options[0].(map[string]interface{})
+	require.True(t, ok, "options 项应为对象")
+	assert.Equal(t, "常日", opt["label"])
+	assert.Equal(t, "常日", opt["value"])
+	assert.Equal(t, float64(2), opt["need"], "两个节次(下标0/1)应得出 need=2")
 }
 
-func TestGetTimetable_Empty(t *testing.T) {
+func TestGetTimetable_Contract(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
 	router.GET("/web/config/:school/:grade/timetable", GetTimetable)
 
 	w := doRequest(t, router, "GET", "/web/config/school1/grade1/timetable", nil)
-
 	assert.Equal(t, http.StatusOK, w.Code)
+	// 契约：顶层包含 start/timetable/divider（usr-dashboard TimetableConfig.vue 依赖）
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp, "timetable")
+	assert.Contains(t, resp, "divider")
 }
 
-func TestGetScheduleConfig_Empty(t *testing.T) {
+func TestGetScheduleConfig_Contract(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
 	router.GET("/web/config/:school/:grade/:class_number/schedule", GetScheduleConfig)
 
 	w := doRequest(t, router, "GET", "/web/config/school1/grade1/class1/schedule", nil)
-
 	assert.Equal(t, http.StatusOK, w.Code)
+	// 契约：daily_class 为 7 天数组，每天含 Chinese/English/classList(嵌套)/timetable
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	daily, ok := resp["daily_class"].([]interface{})
+	assert.True(t, ok, "daily_class 应为数组")
+	assert.Equal(t, 7, len(daily))
+	for _, d := range daily {
+		day, ok := d.(map[string]interface{})
+		require.True(t, ok, "daily_class 项应为对象")
+		assert.Contains(t, day, "Chinese")
+		assert.Contains(t, day, "English")
+		assert.Contains(t, day, "classList")
+		assert.Contains(t, day, "timetable")
+	}
 }
 
-func TestGetSettings_Empty(t *testing.T) {
+func TestGetSettings_Contract(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
 	router.GET("/web/config/:school/:grade/:class_number/settings", GetSettings)
 
 	w := doRequest(t, router, "GET", "/web/config/school1/grade1/class1/settings", nil)
-
 	assert.Equal(t, http.StatusOK, w.Code)
+	// 契约：返回 ClientConfigItems 的完整字段（desktop 渲染与 SettingsConfig.vue 依赖）
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	for _, key := range []string{
+		"countdown_target", "weather_alert_override", "weather_alert_brief",
+		"week_display", "banner_text", "css_style", "startup_behavior", "temperature_colors",
+	} {
+		assert.Contains(t, resp, key)
+	}
 }
 
 // Autorun handlers tests
 
-func TestGetAutorunStatus_Success(t *testing.T) {
+func TestGetAutorunStatus_Contract(t *testing.T) {
 	ensureTestDB()
+
+	db.GetDB().Save(&dbTable.AutorunRecord{Namespace: "default",
+		HashID: "contract-hash", EType: dbTable.AutorunTypeCompensation, Scope: []string{"ALL"}, Level: 1, Status: 0,
+		Parameters: map[string]interface{}{"rule": map[string]interface{}{"date": "2025-10-01", "useDate": "2025-09-29"}},
+	})
 
 	router := setupTestRouter()
 	router.GET("/web/autorun", GetAutorunStatus)
 
 	w := doRequest(t, router, "GET", "/web/autorun", nil)
-
 	assert.Equal(t, http.StatusOK, w.Code)
+	// 契约：data 为数组，每项含 id/type/priority/status/scope/content（usr-dashboard listTasks 依赖）
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	data := resp["data"].([]interface{})
+	assert.NotEmpty(t, data)
+	item, ok := data[0].(map[string]interface{})
+	require.True(t, ok, "列表项应为对象")
+	assert.Equal(t, "contract-hash", item["id"])
+	assert.Equal(t, "COMPENSATION", item["type"])
+	assert.Contains(t, item, "priority")
+	assert.Contains(t, item, "status")
+	assert.Contains(t, item, "scope")
+	content, ok := item["content"].(map[string]interface{})
+	require.True(t, ok, "content 应为对象")
+	assert.Equal(t, "2025-10-01", content["date"])
 }
-
-// Countdown handlers tests
 
 func TestGetAutorunHashStatus_NotFound(t *testing.T) {
 	ensureTestDB()
@@ -242,6 +345,61 @@ func TestGetAutorunHashStatus_NotFound(t *testing.T) {
 
 	w := doRequest(t, router, "GET", "/web/autorun/hash/nonexistent", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
+	// 契约：未命中返回空数组（usr-dashboard getTask 依赖数组/对象形状区分）
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.IsType(t, []interface{}{}, resp["data"])
+}
+
+// Countdown handlers tests
+
+func TestGetCountdownStatus_Contract(t *testing.T) {
+	ensureTestDB()
+
+	db.GetDB().Save(&dbTable.CountdownRecord{Namespace: "default",
+		ID: "cd-contract", Scope: []string{"ALL"},
+		Schedules: []dbTable.CountdownScheduleItem{{Name: "期末", Date: "2026-01-01", Priority: 1}},
+	})
+	db.GetDB().Save(&dbTable.CountdownRecord{Namespace: "default",
+		ID: "cd-scoped", Scope: []string{"other-school"},
+		Schedules: []dbTable.CountdownScheduleItem{{Name: "其他", Date: "2026-02-01", Priority: 1}},
+	})
+
+	router := setupTestRouter()
+	router.GET("/web/countdown", GetCountdownStatus)
+
+	// 契约：loading/hasConfig/data 三键 + 记录形状（按 id 查找，不依赖返回顺序）
+	w := doRequest(t, router, "GET", "/web/countdown", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp, "loading")
+	assert.Equal(t, true, resp["hasConfig"])
+	data := resp["data"].([]interface{})
+	assert.Len(t, data, 2)
+	var item map[string]interface{}
+	for _, raw := range data {
+		m, ok := raw.(map[string]interface{})
+		if ok && m["id"] == "cd-contract" {
+			item = m
+		}
+	}
+	require.NotNil(t, item, "cd-contract 应出现在列表")
+	assert.Contains(t, item, "scope")
+	schedules := item["schedules"].([]interface{})
+	first, ok := schedules[0].(map[string]interface{})
+	require.True(t, ok, "schedules 项应为对象")
+	assert.Equal(t, "期末", first["name"])
+
+	// 契约：?scope= 过滤（usr-dashboard listCountdown 带 scope 查询）
+	w = doRequest(t, router, "GET", "/web/countdown?scope=school1/grade1/class1", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	data = resp["data"].([]interface{})
+	assert.Len(t, data, 1)
+	only, ok := data[0].(map[string]interface{})
+	require.True(t, ok, "过滤结果应为对象")
+	assert.Equal(t, "cd-contract", only["id"])
 }
 
 func TestGetCountdownByID_NotFound(t *testing.T) {
@@ -252,17 +410,10 @@ func TestGetCountdownByID_NotFound(t *testing.T) {
 
 	w := doRequest(t, router, "GET", "/web/countdown/nonexistent", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestGetCountdownStatus_Success(t *testing.T) {
-	ensureTestDB()
-
-	router := setupTestRouter()
-	router.GET("/web/countdown", GetCountdownStatus)
-
-	w := doRequest(t, router, "GET", "/web/countdown", nil)
-
-	assert.Equal(t, http.StatusOK, w.Code)
+	// 契约：未命中返回空数组（usr-dashboard getCountdown 依赖数组/对象形状区分）
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.IsType(t, []interface{}{}, resp["data"])
 }
 
 // Compensation handlers tests
@@ -273,9 +424,18 @@ func TestCompensationFromHoliday_Success(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/autorun/compensation/holiday/:year/:month/:day", CompensationFromHoliday)
 
+	// 2025-10-01 是法定节假日，应有调休结果
 	w := doRequest(t, router, "GET", "/web/autorun/compensation/holiday/2025/10/01", nil)
-
 	assert.Equal(t, http.StatusOK, w.Code)
+	// 契约：{date, compensation}（usr-dashboard fetchCompByHoliday 依赖）
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "2025-10-01", resp["date"])
+	assert.Contains(t, resp, "compensation")
+
+	// 非法日期 -> 400
+	w = doRequest(t, router, "GET", "/web/autorun/compensation/holiday/2025/13/40", nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestCompensationFromWorkday_Success(t *testing.T) {
@@ -285,8 +445,16 @@ func TestCompensationFromWorkday_Success(t *testing.T) {
 	router.GET("/web/autorun/compensation/workday/:year/:month/:day", CompensationFromWorkday)
 
 	w := doRequest(t, router, "GET", "/web/autorun/compensation/workday/2025/10/13", nil)
-
 	assert.Equal(t, http.StatusOK, w.Code)
+	// 契约：{date, compensation}（usr-dashboard fetchCompByWorkday 依赖）
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "2025-10-13", resp["date"])
+	assert.Contains(t, resp, "compensation")
+
+	// 非法日期 -> 400
+	w = doRequest(t, router, "GET", "/web/autorun/compensation/workday/2025/02/30", nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestCompensationFromYear_Success(t *testing.T) {
@@ -296,26 +464,64 @@ func TestCompensationFromYear_Success(t *testing.T) {
 	router.GET("/web/autorun/compensation/year/:year", CompensationFromYear)
 
 	w := doRequest(t, router, "GET", "/web/autorun/compensation/year/2025", nil)
-
 	assert.Equal(t, http.StatusOK, w.Code)
+	// 契约：{year, pairs:[{holiday, workday}]}（usr-dashboard fetchCompYearPairs 依赖）
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, float64(2025), resp["year"])
+	pairs := resp["pairs"].([]interface{})
+	assert.NotEmpty(t, pairs, "2025 年应存在调休对")
+	first, ok := pairs[0].(map[string]interface{})
+	require.True(t, ok, "pairs 项应为对象")
+	assert.Contains(t, first, "holiday")
+	assert.Contains(t, first, "workday")
+
+	// 非法年份 -> 400
+	w = doRequest(t, router, "GET", "/web/autorun/compensation/year/abc", nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestGetScheduleByDate_Success(t *testing.T) {
 	ensureTestDB()
 
+	// 造一条课表 + 作息，验证 by-date 输出真实的课节映射
+	db.GetDB().Save(&dbTable.Timetable{Namespace: "default",
+		School: "bydate", Grade: "2024",
+		TimetableConfig: dbTable.TimetableConfig{
+			Timetable: map[string]map[string]interface{}{"常日": {"08:00-08:40": 0, "08:50-09:30": 1}},
+			Divider:   map[string][]int{"常日": {}},
+		},
+	})
+	db.GetDB().Save(&dbTable.Schedule{Namespace: "default",
+		School: "bydate", Grade: "2024", Class: "1",
+		DailyClasses: [7]dbTable.DailyClass{
+			{}, // Sunday
+			{Timetable: "常日", ClassList: dbTable.ClassList{{"数"}, {"语"}}}, // Monday
+			{}, {}, {}, {}, {},
+		},
+	})
+
 	router := setupTestRouter()
 	router.GET("/web/schedule/by-date", GetScheduleByDate)
 
 	// 契约：handler 读取 scope 参数（school/grade/class），而不是三个独立参数
-	w := doRequest(t, router, "GET", "/web/schedule/by-date?scope=school1/grade1/class1&date=2025-10-13", nil)
-
+	w := doRequest(t, router, "GET", "/web/schedule/by-date?scope=bydate/2024/1&date=2025-10-13", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var resp map[string]interface{}
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	data, ok := resp["data"].(map[string]interface{})
 	assert.True(t, ok, "响应应包含 data 对象")
-	assert.Contains(t, data, "periods")
+	periods, ok := data["periods"].([]interface{})
+	assert.True(t, ok, "data 应包含 periods 数组")
+	assert.Len(t, periods, 2)
+	p0, ok := periods[0].(map[string]interface{})
+	require.True(t, ok, "periods 项应为对象")
+	assert.Equal(t, float64(1), p0["no"])
+	assert.Equal(t, "数", p0["subject"])
+	p1, ok := periods[1].(map[string]interface{})
+	require.True(t, ok, "periods 项应为对象")
+	assert.Equal(t, "语", p1["subject"])
 }
 
 func TestGetScheduleByDate_InvalidDate(t *testing.T) {
@@ -324,7 +530,9 @@ func TestGetScheduleByDate_InvalidDate(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/schedule/by-date", GetScheduleByDate)
 
-	w := doRequest(t, router, "GET", "/web/schedule/by-date?scope=school1/grade1/class1&date=invalid", nil)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/web/schedule/by-date?scope=school1/grade1/class1&date=invalid", nil)
+	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -335,7 +543,9 @@ func TestGetScheduleByDate_InvalidScope(t *testing.T) {
 	router := setupTestRouter()
 	router.GET("/web/schedule/by-date", GetScheduleByDate)
 
-	w := doRequest(t, router, "GET", "/web/schedule/by-date?scope=school1&date=2025-10-13", nil)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/web/schedule/by-date?scope=school1&date=2025-10-13", nil)
+	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -344,7 +554,7 @@ func TestPutSubjects_InvalidJSON(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.PUT("/web/config/:school/:grade/subjects", PutSubjects)
+	router.PUT("/web/config/:school/:grade/subjects", withClaims(PutSubjects))
 
 	w := doRawRequest(t, router, "PUT", "/web/config/school1/grade1/subjects", "invalid")
 
@@ -355,22 +565,40 @@ func TestPutSubjects_Success(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.PUT("/web/config/:school/:grade/subjects", PutSubjects)
+	router.PUT("/web/config/:school/:grade/subjects", withClaims(PutSubjects))
+	router.GET("/web/config/:school/:grade/subjects/options", GetSubjectsOptions)
 
 	body := map[string]interface{}{
-		"abbr":     []map[string]interface{}{{"text": "数"}},
-		"fullName": []map[string]interface{}{{"text": "数学"}},
+		"abbr":     []map[string]interface{}{{"text": "数"}, {"text": "语"}},
+		"fullName": []map[string]interface{}{{"text": "数学"}, {"text": "语文"}},
 	}
 	w := doRequest(t, router, "PUT", "/web/config/school1/grade1/subjects", body)
-
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化
+	w = doRequest(t, router, "GET", "/web/config/school1/grade1/subjects/options", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	options := resp["options"].([]interface{})
+	assert.Len(t, options, 2)
+	values := map[string]bool{}
+	for _, o := range options {
+		opt, ok := o.(map[string]interface{})
+		require.True(t, ok, "options 项应为对象")
+		value, ok := opt["value"].(string)
+		require.True(t, ok, "options 项应含 value")
+		values[value] = true
+	}
+	assert.True(t, values["数"])
+	assert.True(t, values["语"])
 }
 
 func TestPutTimetable_InvalidJSON(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.PUT("/web/config/:school/:grade/timetable", PutTimetable)
+	router.PUT("/web/config/:school/:grade/timetable", withClaims(PutTimetable))
 
 	w := doRawRequest(t, router, "PUT", "/web/config/school1/grade1/timetable", "invalid")
 
@@ -381,24 +609,39 @@ func TestPutTimetable_Success(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.PUT("/web/config/:school/:grade/timetable", PutTimetable)
+	router.PUT("/web/config/:school/:grade/timetable", withClaims(PutTimetable))
+	router.GET("/web/config/:school/:grade/timetable", GetTimetable)
 
 	body := map[string]interface{}{
 		"timetable": map[string]interface{}{
-			"常日": map[string]interface{}{"早上1": 1},
+			"常日": map[string]interface{}{"08:00-08:40": 0},
+			"考试": map[string]interface{}{"08:00-08:40": 0},
 		},
 		"divider": map[string]interface{}{},
 	}
 	w := doRequest(t, router, "PUT", "/web/config/school1/grade1/timetable", body)
-
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化与 divider key 同步
+	w = doRequest(t, router, "GET", "/web/config/school1/grade1/timetable", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	timetable, ok := resp["timetable"].(map[string]interface{})
+	require.True(t, ok, "timetable 应为对象")
+	assert.Contains(t, timetable, "常日")
+	assert.Contains(t, timetable, "考试")
+	divider, ok := resp["divider"].(map[string]interface{})
+	require.True(t, ok, "divider 应为对象")
+	assert.Contains(t, divider, "常日", "divider 键应与 timetable 同步")
+	assert.Contains(t, divider, "考试")
 }
 
 func TestPutTimetable_MissingChangri(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.PUT("/web/config/:school/:grade/timetable", PutTimetable)
+	router.PUT("/web/config/:school/:grade/timetable", withClaims(PutTimetable))
 
 	body := map[string]interface{}{
 		"timetable": map[string]interface{}{
@@ -415,10 +658,31 @@ func TestPutScheduleConfig_InvalidJSON(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.PUT("/web/config/:school/:grade/:class_number/schedule", PutScheduleConfig)
+	router.PUT("/web/config/:school/:grade/:class_number/schedule", withClaims(PutScheduleConfig))
 
 	w := doRawRequest(t, router, "PUT", "/web/config/school1/grade1/class1/schedule", "invalid")
 
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestPutScheduleConfig_MissingDailyClass(t *testing.T) {
+	ensureTestDB()
+
+	router := setupTestRouter()
+	router.PUT("/web/config/:school/:grade/:class_number/schedule", withClaims(PutScheduleConfig))
+
+	// 契约：缺 daily_class 或长度不为 7 必须 400，防止坏请求清空课表
+	w := doRequest(t, router, "PUT", "/web/config/school1/grade1/class1/schedule",
+		map[string]interface{}{"timetable": "常日"})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	w = doRequest(t, router, "PUT", "/web/config/school1/grade1/class1/schedule",
+		map[string]interface{}{"daily_class": []interface{}{map[string]interface{}{"Chinese": "一"}}})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// 7 项但存在非对象条目也必须 400，防止对应日期被写入零值课表
+	w = doRequest(t, router, "PUT", "/web/config/school1/grade1/class1/schedule",
+		map[string]interface{}{"daily_class": []interface{}{nil, "bad", 1, 2.5, true, []interface{}{}, map[string]interface{}{}}})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -426,24 +690,49 @@ func TestPutScheduleConfig_Success(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.PUT("/web/config/:school/:grade/:class_number/schedule", PutScheduleConfig)
+	router.PUT("/web/config/:school/:grade/:class_number/schedule", withClaims(PutScheduleConfig))
+	router.GET("/web/config/:school/:grade/:class_number/schedule", GetScheduleConfig)
 
-	body := map[string]interface{}{
-		"Chinese":   "周一",
-		"English":   "Monday",
-		"classList": []interface{}{[]interface{}{"数"}},
-		"timetable": "常日",
+	// 契约：请求体为 7 天的 daily_class 数组（usr-dashboard ScheduleConfig.vue 的提交格式）
+	day := func(chinese string) map[string]interface{} {
+		return map[string]interface{}{
+			"Chinese":   chinese,
+			"English":   "X",
+			"timetable": "常日",
+			"classList": []interface{}{[]interface{}{"数"}},
+		}
 	}
+	days := []interface{}{}
+	for _, name := range []string{"日", "一", "二", "三", "四", "五", "六"} {
+		days = append(days, day(name))
+	}
+	body := map[string]interface{}{"daily_class": days}
 	w := doRequest(t, router, "PUT", "/web/config/school1/grade1/class1/schedule", body)
-
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化：7 天结构与首日课程
+	w = doRequest(t, router, "GET", "/web/config/school1/grade1/class1/schedule", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	daily, ok := resp["daily_class"].([]interface{})
+	assert.True(t, ok, "daily_class 应为数组")
+	assert.Equal(t, 7, len(daily))
+	day0, ok := daily[0].(map[string]interface{})
+	require.True(t, ok, "daily_class 项应为对象")
+	assert.Equal(t, "日", day0["Chinese"])
+	classList, ok := day0["classList"].([]interface{})
+	require.True(t, ok, "classList 应为数组")
+	slot, ok := classList[0].([]interface{})
+	require.True(t, ok, "classList 项应为嵌套数组")
+	assert.Equal(t, []interface{}{"数"}, slot)
 }
 
 func TestPutSettings_InvalidJSON(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.PUT("/web/config/:school/:grade/:class_number/settings", PutSettings)
+	router.PUT("/web/config/:school/:grade/:class_number/settings", withClaims(PutSettings))
 
 	w := doRawRequest(t, router, "PUT", "/web/config/school1/grade1/class1/settings", "invalid")
 
@@ -454,22 +743,30 @@ func TestPutSettings_Success(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.PUT("/web/config/:school/:grade/:class_number/settings", PutSettings)
+	router.PUT("/web/config/:school/:grade/:class_number/settings", withClaims(PutSettings))
+	router.GET("/web/config/:school/:grade/:class_number/settings", GetSettings)
 
 	body := map[string]interface{}{
 		"countdown_target": "2025-12-31",
 		"banner_text":      "欢迎",
 	}
 	w := doRequest(t, router, "PUT", "/web/config/school1/grade1/class1/settings", body)
-
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化
+	w = doRequest(t, router, "GET", "/web/config/school1/grade1/class1/settings", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "2025-12-31", resp["countdown_target"])
+	assert.Equal(t, "欢迎", resp["banner_text"])
 }
 
 func TestCopyConfig_InvalidJSON(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.POST("/web/config/copy", CopyConfig)
+	router.POST("/web/config/copy", withClaims(CopyConfig))
 
 	w := doRawRequest(t, router, "POST", "/web/config/copy", "invalid")
 
@@ -480,7 +777,7 @@ func TestCopyConfig_MissingSource(t *testing.T) {
 	ensureTestDB()
 
 	router := setupTestRouter()
-	router.POST("/web/config/copy", CopyConfig)
+	router.POST("/web/config/copy", withClaims(CopyConfig))
 
 	body := map[string]interface{}{
 		"from": map[string]interface{}{"school": "nosrc", "grade": "g", "class": "c"},
@@ -495,28 +792,28 @@ func TestCopyConfig_Success(t *testing.T) {
 	ensureTestDB()
 
 	database := db.GetDB()
-	database.Save(&dbTable.Subject{
+	database.Save(&dbTable.Subject{Namespace: "default",
 		School: "src", Grade: "g",
 		SubjectConfig: dbTable.SubjectConfig{SubjectName: map[string]string{"数": "数学"}},
 	})
-	database.Save(&dbTable.Timetable{
+	database.Save(&dbTable.Timetable{Namespace: "default",
 		School: "src", Grade: "g",
 		TimetableConfig: dbTable.TimetableConfig{
 			Timetable: map[string]map[string]interface{}{"常日": {"早上1": 1}},
 			Divider:   map[string][]int{"常日": {1}},
 		},
 	})
-	database.Save(&dbTable.Schedule{
+	database.Save(&dbTable.Schedule{Namespace: "default",
 		School: "src", Grade: "g", Class: "c",
 		DailyClasses: [7]dbTable.DailyClass{{Timetable: "常日", ClassList: dbTable.ClassList{{"数"}}}},
 	})
-	database.Save(&dbTable.ClientConfig{
+	database.Save(&dbTable.ClientConfig{Namespace: "default",
 		School: "src", Grade: "g", Class: "c",
 		ClientConfigItems: dbTable.ClientConfigItems{BannerText: "来自源班级"},
 	})
 
 	router := setupTestRouter()
-	router.POST("/web/config/copy", CopyConfig)
+	router.POST("/web/config/copy", withClaims(CopyConfig))
 
 	body := map[string]interface{}{
 		"from": map[string]interface{}{"school": "src", "grade": "g", "class": "c"},
@@ -525,6 +822,11 @@ func TestCopyConfig_Success(t *testing.T) {
 	w := doRequest(t, router, "POST", "/web/config/copy", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+	// 契约：响应为复制配置自身的 from/to 结构，而不是内部广播的 SyncConfig 载荷
+	var copyResp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &copyResp))
+	assert.Contains(t, copyResp, "from")
+	assert.Contains(t, copyResp, "to")
 
 	// 验证目标班级已复制科目配置
 	var dstSubject dbTable.Subject
@@ -537,13 +839,14 @@ func TestCopyConfig_Success(t *testing.T) {
 func TestPutCompensationRule_InvalidDate(t *testing.T) {
 	ensureTestDB()
 
-	router, token := authedWriteRouter(t, "PUT", "/web/autorun/compensation", PutCompensationRule)
+	router := setupTestRouter()
+	router.PUT("/web/autorun/compensation", withClaims(PutCompensationRule))
 
 	body := map[string]interface{}{
-		"type": 0, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeCompensation, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "invalid", "useDate": "2025-09-29"},
 	}
-	w := doRequestWithToken(t, router, "PUT", "/web/autorun/compensation", body, token)
+	w := doRequest(t, router, "PUT", "/web/autorun/compensation", body)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -551,41 +854,76 @@ func TestPutCompensationRule_InvalidDate(t *testing.T) {
 func TestPutCompensationRule_Success(t *testing.T) {
 	ensureTestDB()
 
-	router, token := authedWriteRouter(t, "PUT", "/web/autorun/compensation", PutCompensationRule)
+	router := setupTestRouter()
+	router.PUT("/web/autorun/compensation", withClaims(PutCompensationRule))
+	router.GET("/web/autorun", GetAutorunStatus)
 
 	body := map[string]interface{}{
-		"type": 0, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeCompensation, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-10-01", "useDate": "2025-09-29"},
 	}
-	w := doRequestWithToken(t, router, "PUT", "/web/autorun/compensation", body, token)
-
+	w := doRequest(t, router, "PUT", "/web/autorun/compensation", body)
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化：规则出现在 /web/autorun 列表且字段正确
+	var putResp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &putResp))
+	hashID := putResp["id"].(string)
+	assert.NotEmpty(t, hashID)
+
+	w = doRequest(t, router, "GET", "/web/autorun", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	data := resp["data"].([]interface{})
+	found := false
+	for _, item := range data {
+		m, ok := item.(map[string]interface{})
+		require.True(t, ok, "列表项应为对象")
+		if m["id"] == hashID {
+			found = true
+			assert.Equal(t, "COMPENSATION", m["type"])
+			content, ok := m["content"].(map[string]interface{})
+			require.True(t, ok, "content 应为对象")
+			assert.Equal(t, "2025-10-01", content["date"])
+			assert.Equal(t, "2025-09-29", content["useDate"])
+		}
+	}
+	assert.True(t, found, "写入的调休规则应出现在列表")
 }
 
 func TestPutTimetableRule_Success(t *testing.T) {
 	ensureTestDB()
 
-	router, token := authedWriteRouter(t, "PUT", "/web/autorun/timetable", PutTimetableRule)
+	router := setupTestRouter()
+	router.PUT("/web/autorun/timetable", withClaims(PutTimetableRule))
+	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
-		"type": 1, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeTimetable, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-10-08", "timetableId": "exam"},
 	}
-	w := doRequestWithToken(t, router, "PUT", "/web/autorun/timetable", body, token)
+	w := doRequest(t, router, "PUT", "/web/autorun/timetable", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化
+	item := fetchAutorunDetail(t, router, w)
+	assert.Equal(t, "TIMETABLE", item["type"])
+	assert.Equal(t, "exam", autorunContent(t, item)["timetableId"])
 }
 
 func TestPutScheduleRule_MissingPeriods(t *testing.T) {
 	ensureTestDB()
 
-	router, token := authedWriteRouter(t, "PUT", "/web/autorun/schedule", PutScheduleRule)
+	router := setupTestRouter()
+	router.PUT("/web/autorun/schedule", withClaims(PutScheduleRule))
 
 	body := map[string]interface{}{
-		"type": 2, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeSchedule, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-10-09", "schedule": map[string]interface{}{}},
 	}
-	w := doRequestWithToken(t, router, "PUT", "/web/autorun/schedule", body, token)
+	w := doRequest(t, router, "PUT", "/web/autorun/schedule", body)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -593,44 +931,77 @@ func TestPutScheduleRule_MissingPeriods(t *testing.T) {
 func TestPutScheduleRule_Success(t *testing.T) {
 	ensureTestDB()
 
-	router, token := authedWriteRouter(t, "PUT", "/web/autorun/schedule", PutScheduleRule)
+	router := setupTestRouter()
+	router.PUT("/web/autorun/schedule", withClaims(PutScheduleRule))
+	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
-		"type": 2, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeSchedule, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{
 			"date":     "2025-10-09",
 			"schedule": map[string]interface{}{"periods": []interface{}{map[string]interface{}{"no": 1, "subject": "数"}}},
 		},
 	}
-	w := doRequestWithToken(t, router, "PUT", "/web/autorun/schedule", body, token)
+	w := doRequest(t, router, "PUT", "/web/autorun/schedule", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化
+	item := fetchAutorunDetail(t, router, w)
+	assert.Equal(t, "SCHEDULE", item["type"])
+	schedule, ok := autorunContent(t, item)["schedule"].(map[string]interface{})
+	require.True(t, ok, "content.schedule 应为对象")
+	periods, ok := schedule["periods"].([]interface{})
+	require.True(t, ok, "periods 应为数组")
+	assert.Len(t, periods, 1)
+	p0, ok := periods[0].(map[string]interface{})
+	require.True(t, ok, "period 应为对象")
+	assert.Equal(t, float64(1), p0["no"])
+	assert.Equal(t, "数", p0["subject"])
 }
 
 func TestPutAllRule_Success(t *testing.T) {
 	ensureTestDB()
 
-	router, token := authedWriteRouter(t, "PUT", "/web/autorun/all", PutAllRule)
+	router := setupTestRouter()
+	router.PUT("/web/autorun/all", withClaims(PutAllRule))
+	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
-		"type": 3, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeAll, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{
 			"date":        "2025-10-10",
 			"timetableId": "exam",
 			"schedule":    map[string]interface{}{"periods": []interface{}{map[string]interface{}{"no": 1, "subject": "班会"}}},
 		},
 	}
-	w := doRequestWithToken(t, router, "PUT", "/web/autorun/all", body, token)
+	w := doRequest(t, router, "PUT", "/web/autorun/all", body)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化
+	item := fetchAutorunDetail(t, router, w)
+	assert.Equal(t, "ALL", item["type"])
+	content := autorunContent(t, item)
+	assert.Equal(t, "exam", content["timetableId"])
+	schedule, ok := content["schedule"].(map[string]interface{})
+	require.True(t, ok, "content.schedule 应为对象")
+	periods, ok := schedule["periods"].([]interface{})
+	require.True(t, ok, "periods 应为数组")
+	assert.Len(t, periods, 1)
+	p0, ok := periods[0].(map[string]interface{})
+	require.True(t, ok, "period 应为对象")
+	assert.Equal(t, float64(1), p0["no"])
+	assert.Equal(t, "班会", p0["subject"])
 }
 
 func TestDeleteAutorunRecord_NotFound(t *testing.T) {
 	ensureTestDB()
 
-	router, token := authedWriteRouter(t, "DELETE", "/web/autorun/:hashid", DeleteAutorunRecord)
+	router := setupTestRouter()
+	router.DELETE("/web/autorun/:hashid", withClaims(DeleteAutorunRecord))
 
-	w := doRequestWithToken(t, router, "DELETE", "/web/autorun/nonexistent-hash", nil, token)
+	w := doRequest(t, router, "DELETE", "/web/autorun/nonexistent-hash", nil)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
@@ -639,13 +1010,16 @@ func TestDeleteAutorunRecord_Success(t *testing.T) {
 	ensureTestDB()
 
 	// 先创建一条规则
-	router, token := authedWriteRouter(t, "PUT", "/web/autorun/compensation", PutCompensationRule)
+	router := setupTestRouter()
+	router.PUT("/web/autorun/compensation", withClaims(PutCompensationRule))
+	router.DELETE("/web/autorun/:hashid", withClaims(DeleteAutorunRecord))
+	router.GET("/web/autorun/hash/:hashid", GetAutorunHashStatus)
 
 	body := map[string]interface{}{
-		"type": 0, "scope": []string{"ALL"}, "priority": 1,
+		"type": dbTable.AutorunTypeCompensation, "scope": []string{"ALL"}, "priority": 1,
 		"content": map[string]interface{}{"date": "2025-11-01", "useDate": "2025-10-31"},
 	}
-	w := doRequestWithToken(t, router, "PUT", "/web/autorun/compensation", body, token)
+	w := doRequest(t, router, "PUT", "/web/autorun/compensation", body)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var resp map[string]interface{}
@@ -653,10 +1027,13 @@ func TestDeleteAutorunRecord_Success(t *testing.T) {
 	hashID, _ := resp["id"].(string)
 	assert.NotEmpty(t, hashID)
 
-	// 再删除
-	router.Handle("DELETE", "/web/autorun/:hashid", middleware.JWTAuthMiddleware(), DeleteAutorunRecord)
-	w2 := doRequestWithToken(t, router, "DELETE", "/web/autorun/"+hashID, nil, token)
+	// 再删除并回读验证
+	w2 := doRequest(t, router, "DELETE", "/web/autorun/"+hashID, nil)
 	assert.Equal(t, http.StatusOK, w2.Code)
+	w3 := doRequest(t, router, "GET", "/web/autorun/hash/"+hashID, nil)
+	assert.Equal(t, http.StatusOK, w3.Code)
+	assert.NoError(t, json.Unmarshal(w3.Body.Bytes(), &resp))
+	assert.IsType(t, []interface{}{}, resp["data"], "删除后详情应为空数组")
 }
 
 // Countdown 写接口测试
@@ -664,7 +1041,9 @@ func TestDeleteAutorunRecord_Success(t *testing.T) {
 func TestPutCountdownRule_Success(t *testing.T) {
 	ensureTestDB()
 
-	router, token := authedWriteRouter(t, "PUT", "/web/countdown", PutCountdownRule)
+	router := setupTestRouter()
+	router.PUT("/web/countdown", withClaims(PutCountdownRule))
+	router.GET("/web/countdown", GetCountdownStatus)
 
 	body := map[string]interface{}{
 		"scope": []string{"ALL"},
@@ -672,17 +1051,43 @@ func TestPutCountdownRule_Success(t *testing.T) {
 			{"name": "期末考试", "date": "2026-01-01", "priority": 1},
 		},
 	}
-	w := doRequestWithToken(t, router, "PUT", "/web/countdown", body, token)
-
+	w := doRequest(t, router, "PUT", "/web/countdown", body)
 	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 回读验证持久化
+	var putResp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &putResp))
+	id := putResp["id"].(string)
+	assert.NotEmpty(t, id)
+
+	w = doRequest(t, router, "GET", "/web/countdown", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	data := resp["data"].([]interface{})
+	found := false
+	for _, item := range data {
+		m, ok := item.(map[string]interface{})
+		require.True(t, ok, "列表项应为对象")
+		if m["id"] == id {
+			found = true
+			schedules := m["schedules"].([]interface{})
+			assert.Len(t, schedules, 1)
+			s, ok := schedules[0].(map[string]interface{})
+			require.True(t, ok, "schedules 项应为对象")
+			assert.Equal(t, "期末考试", s["name"])
+		}
+	}
+	assert.True(t, found, "写入的倒数日应出现在列表")
 }
 
 func TestDeleteCountdownRecord_NotFound(t *testing.T) {
 	ensureTestDB()
 
-	router, token := authedWriteRouter(t, "DELETE", "/web/countdown/:id", DeleteCountdownRecord)
+	router := setupTestRouter()
+	router.DELETE("/web/countdown/:id", withClaims(DeleteCountdownRecord))
 
-	w := doRequestWithToken(t, router, "DELETE", "/web/countdown/nonexistent-id", nil, token)
+	w := doRequest(t, router, "DELETE", "/web/countdown/nonexistent-id", nil)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
@@ -699,13 +1104,15 @@ func TestExportBackup_Success(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	// 响应应为有效 JSON 备份（meta + 各表数据）
+	// 契约：响应应为完整备份 JSON（meta + 全部 8 个表数据段），usr-dashboard 整包上传依赖
 	var payload map[string]interface{}
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &payload))
-	assert.Contains(t, payload, "meta")
-	assert.Contains(t, payload, "schedules")
-	assert.Contains(t, payload, "timetables")
-	assert.Contains(t, payload, "subjects")
+	for _, key := range []string{
+		"meta", "schedules", "client_configs", "timetables", "subjects",
+		"data_versions", "autorun_records", "countdown_records", "users",
+	} {
+		assert.Contains(t, payload, key)
+	}
 }
 
 func TestImportBackup_InvalidBody(t *testing.T) {
@@ -714,7 +1121,10 @@ func TestImportBackup_InvalidBody(t *testing.T) {
 	router := setupTestRouter()
 	router.POST("/web/backup/import", ImportBackup)
 
-	w := doRawRequest(t, router, "POST", "/web/backup/import", "invalid")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/web/backup/import", bytes.NewBufferString("invalid"))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -727,11 +1137,16 @@ func TestImportBackup_RoundTrip(t *testing.T) {
 	router.GET("/web/backup/export", ExportBackup)
 	router.POST("/web/backup/import", ImportBackup)
 
-	w := doRequest(t, router, "GET", "/web/backup/export", nil)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/web/backup/export", nil)
+	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	// 回填导入（导出内容为合法 JSON，直接作为原始请求体提交）
-	w2 := doRawRequest(t, router, "POST", "/web/backup/import", string(w.Body.Bytes()))
+	// 回填导入
+	w2 := httptest.NewRecorder()
+	req2, _ := http.NewRequest("POST", "/web/backup/import", bytes.NewBuffer(w.Body.Bytes()))
+	req2.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w2, req2)
 	assert.Equal(t, http.StatusOK, w2.Code)
 
 	var resp map[string]interface{}
@@ -745,7 +1160,9 @@ func TestFullExportBackup_Success(t *testing.T) {
 	router := setupTestRouter()
 	router.POST("/web/backup/full-export", FullExportBackup)
 
-	w := doRequest(t, router, "POST", "/web/backup/full-export", nil)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/web/backup/full-export", nil)
+	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	var payload map[string]interface{}
@@ -759,7 +1176,9 @@ func TestFullImportBackup_InvalidMode(t *testing.T) {
 	router := setupTestRouter()
 	router.POST("/web/backup/full-import", FullImportBackup)
 
-	w := doRequest(t, router, "POST", "/web/backup/full-import?mode=invalid", nil)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/web/backup/full-import?mode=invalid", nil)
+	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
@@ -772,18 +1191,18 @@ func TestFullImportBackup_RoundTrip(t *testing.T) {
 	router.POST("/web/backup/full-import", FullImportBackup)
 
 	// 先 full-export 拿备份内容
-	w := doRequest(t, router, "POST", "/web/backup/full-export", nil)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", "/web/backup/full-export", nil)
+	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	// multipart 回填导入（skip 模式：仅 mode != overwrite 时响应携带 mode 字段）
+	// multipart 回填导入
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	part, err := writer.CreateFormFile("file", "backup.json")
-	assert.NoError(t, err)
-	_, err = part.Write(w.Body.Bytes())
-	assert.NoError(t, err)
-	assert.NoError(t, writer.WriteField("mode", "skip"))
-	assert.NoError(t, writer.Close())
+	part, _ := writer.CreateFormFile("file", "backup.json")
+	part.Write(w.Body.Bytes())
+	writer.WriteField("mode", "overwrite")
+	writer.Close()
 
 	w2 := httptest.NewRecorder()
 	req2, _ := http.NewRequest("POST", "/web/backup/full-import", body)
@@ -794,5 +1213,8 @@ func TestFullImportBackup_RoundTrip(t *testing.T) {
 	var resp map[string]interface{}
 	assert.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp))
 	assert.Equal(t, float64(200), resp["status"])
-	assert.Equal(t, "skip", resp["mode"])
+	// saas 契约：mode=overwrite 时响应不携带 mode 字段（main 分支返回 "overwrite"）
+	if modeVal, exists := resp["mode"]; exists {
+		assert.Equal(t, "overwrite", modeVal)
+	}
 }

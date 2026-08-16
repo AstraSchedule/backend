@@ -7,6 +7,7 @@ import (
 	"AstraScheduleServerGo/router/client"
 	"AstraScheduleServerGo/service"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 
@@ -198,6 +199,7 @@ func PutSubjects(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	client.BroadcastSync(ns, school, grade)
 	c.JSON(http.StatusOK, gin.H{"status": 200})
 }
 
@@ -257,6 +259,7 @@ func PutTimetable(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	client.BroadcastSync(ns, school, grade)
 	c.JSON(http.StatusOK, gin.H{"status": 200})
 }
 
@@ -423,7 +426,8 @@ func CopyConfig(c *gin.Context) {
 		return
 	}
 
-	client.BroadcastSyncConfig(c)
+	// 复制后通知目标班级所在年级的在线客户端刷新（来源班级数据未变，无需广播）
+	client.BroadcastSync(ns, payload.To.School, payload.To.Grade)
 	c.JSON(http.StatusOK, gin.H{
 		"status": 200,
 		"from": gin.H{
@@ -546,6 +550,28 @@ func PutScheduleConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	// 契约校验：请求体必须携带完整的 7 天 daily_class 数组，
+	// 否则会导致该班课表被静默清空（防坏请求覆盖既有数据）
+	bodyMap := raw
+	if modelVal, ok := raw["model"].(map[string]interface{}); ok {
+		bodyMap = modelVal
+	}
+	dailyClassRaw, ok := bodyMap["daily_class"].([]interface{})
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "daily_class 必须为数组"})
+		return
+	}
+	if len(dailyClassRaw) != 7 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "daily_class 必须包含 7 天（日一二三四五六）"})
+		return
+	}
+	for index, one := range dailyClassRaw {
+		if _, isObj := one.(map[string]interface{}); !isObj {
+			// 契约校验：非对象条目会导致对应日期写入零值课表（部分清空），必须拒绝
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("daily_class[%d] 必须为对象", index)})
+			return
+		}
+	}
 	body := parseSchedulePayload(raw)
 
 	var daily [7]dbTable.DailyClass
@@ -565,6 +591,7 @@ func PutScheduleConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	client.BroadcastSync(ns, school, grade)
 	c.JSON(http.StatusOK, gin.H{"status": 200})
 }
 
@@ -592,6 +619,7 @@ func PutSettings(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	client.BroadcastSyncConfig(c)
+	// 通用设置影响桌面端渲染，广播刷新
+	client.BroadcastSync(ns, school, grade)
 	c.JSON(http.StatusOK, gin.H{"status": 200})
 }

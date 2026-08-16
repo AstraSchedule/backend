@@ -26,13 +26,23 @@ func CreateSchool(c *gin.Context) {
 		return
 	}
 
+	// 学校是否存在以关联的科目行判断（学校本身没有独立表行，
+	// 按 Schedule 行判断会在“学校尚无班级”时漏判，导致重复创建返回 200）；
+	// 冲突检测限定当前租户，防止跨租户同名学校互相误判 409
+	ns := middleware.GetNamespace(c)
 	var count int64
-	db.GetDB().Model(&dbTable.Schedule{}).Where(whereSchool, req.Name).Count(&count)
+	countRes := db.GetDB().Model(&dbTable.Subject{}).Where("namespace = ?", ns).Where(whereSchool, req.Name).Count(&count)
+	if countRes.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": countRes.Error.Error()})
+		return
+	}
 	if count > 0 {
 		c.JSON(http.StatusConflict, gin.H{"detail": "学校已存在"})
 		return
 	}
 
+	// 学校本身没有持久化表行（存在性由科目行推导），此处无数据写入，
+	// 因此不广播：客户端没有任何需要刷新的数据变更
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "学校创建成功"})
 }
 
@@ -64,6 +74,7 @@ func DeleteSchool(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	broadcastScopes(ns, []string{school})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "学校已删除"})
 }
 
@@ -77,15 +88,22 @@ func CreateGrade(c *gin.Context) {
 		return
 	}
 
+	// 年级是否存在以默认科目/作息行判断（学校与年级本身没有独立表行，
+	// 按 Schedule 行判断会在“年级尚无班级”时漏判，导致重复创建返回 200）；
+	// 冲突检测限定当前租户，防止跨租户同名年级互相误判 409
+	ns := middleware.GetNamespace(c)
 	var count int64
-	db.GetDB().Model(&dbTable.Schedule{}).Where(whereSchoolGrade, school, req.Name).Count(&count)
+	countRes := db.GetDB().Model(&dbTable.Subject{}).Where("namespace = ?", ns).Where(whereSchoolGrade, school, req.Name).Count(&count)
+	if countRes.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": countRes.Error.Error()})
+		return
+	}
 	if count > 0 {
 		c.JSON(http.StatusConflict, gin.H{"detail": "年级已存在"})
 		return
 	}
 
 	// 创建默认科目和作息表
-	ns := middleware.GetNamespace(c)
 	subject := dbTable.Subject{
 		Namespace: ns,
 		School:    school,
@@ -98,7 +116,22 @@ func CreateGrade(c *gin.Context) {
 			},
 		},
 	}
-	db.GetDB().Clauses(clause.OnConflict{DoNothing: true}).Create(&subject)
+	// 事务内原子创建默认科目与作息：以 Subject 行的插入结果作为年级是否已存在的最终裁决，
+	// 并发重复请求只会有一个成功插入（另一个 RowsAffected==0 -> 409）
+	tx := db.GetDB().Begin()
+	defer func() { if recover() != nil { tx.Rollback() } }()
+
+	subjectRes := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&subject)
+	if subjectRes.Error != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": subjectRes.Error.Error()})
+		return
+	}
+	if subjectRes.RowsAffected == 0 {
+		tx.Rollback()
+		c.JSON(http.StatusConflict, gin.H{"detail": "年级已存在"})
+		return
+	}
 
 	timetable := dbTable.Timetable{
 		Namespace: ns,
@@ -113,8 +146,19 @@ func CreateGrade(c *gin.Context) {
 			Start:   time.Now().Format("2006-01-02"),
 		},
 	}
-	db.GetDB().Clauses(clause.OnConflict{DoNothing: true}).Create(&timetable)
+	timetableRes := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&timetable)
+	if timetableRes.Error != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": timetableRes.Error.Error()})
+		return
+	}
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
+	// 年级创建生成默认科目/作息，广播该年级客户端刷新
+	broadcastScopes(ns, []string{school + "/" + req.Name})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "年级创建成功"})
 }
 
@@ -144,6 +188,7 @@ func DeleteGrade(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	broadcastScopes(ns, []string{school + "/" + grade})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "年级已删除"})
 }
 
@@ -158,14 +203,19 @@ func CreateClass(c *gin.Context) {
 		return
 	}
 
+	// 冲突检测限定当前租户，防止跨租户同名班级互相误判 409
+	ns := middleware.GetNamespace(c)
 	var count int64
-	db.GetDB().Model(&dbTable.Schedule{}).Where(whereSchoolGradeClass, school, grade, req.Name).Count(&count)
+	countRes := db.GetDB().Model(&dbTable.Schedule{}).Where("namespace = ?", ns).Where(whereSchoolGradeClass, school, grade, req.Name).Count(&count)
+	if countRes.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": countRes.Error.Error()})
+		return
+	}
 	if count > 0 {
 		c.JSON(http.StatusConflict, gin.H{"detail": "班级已存在"})
 		return
 	}
 
-	ns := middleware.GetNamespace(c)
 	schedule := dbTable.Schedule{
 		Namespace: ns,
 		School:    school,
@@ -181,7 +231,16 @@ func CreateClass(c *gin.Context) {
 			{Chinese: "六", English: "SAT", Timetable: "没课", ClassList: dbTable.ClassList{[]string{"课"}}},
 		},
 	}
-	db.GetDB().Clauses(clause.OnConflict{DoNothing: true}).Create(&schedule)
+	// 事务内原子创建默认课表与客户端配置，任一失败回滚
+	tx := db.GetDB().Begin()
+	defer func() { if recover() != nil { tx.Rollback() } }()
+
+	scheduleRes := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&schedule)
+	if scheduleRes.Error != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": scheduleRes.Error.Error()})
+		return
+	}
 
 	// 创建默认客户端配置（含 CSS 变量）
 	clientConfig := dbTable.ClientConfig{
@@ -224,8 +283,19 @@ func CreateClass(c *gin.Context) {
 			StartupBehavior: "normal",
 		},
 	}
-	db.GetDB().Clauses(clause.OnConflict{DoNothing: true}).Create(&clientConfig)
+	configRes := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&clientConfig)
+	if configRes.Error != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": configRes.Error.Error()})
+		return
+	}
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
+	// 班级创建生成默认课表与客户端配置，提交成功后才广播该年级客户端刷新
+	broadcastScopes(ns, []string{school + "/" + grade})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "班级创建成功"})
 }
 
@@ -252,5 +322,6 @@ func DeleteClass(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	broadcastScopes(ns, []string{school + "/" + grade})
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "班级已删除"})
 }

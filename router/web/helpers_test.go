@@ -91,8 +91,8 @@ func TestMakeHashID(t *testing.T) {
 	params := map[string]interface{}{
 		"date": "2025-10-15",
 	}
-	hash1 := makeHashID("ns1", 2, scope, 1, params)
-	hash2 := makeHashID("ns1", 2, scope, 1, params)
+	hash1 := makeHashID("ns1", dbTable.AutorunTypeSchedule, scope, 1, params)
+	hash2 := makeHashID("ns1", dbTable.AutorunTypeSchedule, scope, 1, params)
 	assert.Equal(t, hash1, hash2)
 	assert.NotEmpty(t, hash1)
 }
@@ -103,8 +103,8 @@ func TestMakeHashID_SameContentDifferentNamespace(t *testing.T) {
 	params := map[string]interface{}{
 		"date": "2025-10-15",
 	}
-	hashA := makeHashID("cn/getastra/tenant-a", 2, scope, 1, params)
-	hashB := makeHashID("cn/getastra/tenant-b", 2, scope, 1, params)
+	hashA := makeHashID("cn/getastra/tenant-a", dbTable.AutorunTypeSchedule, scope, 1, params)
+	hashB := makeHashID("cn/getastra/tenant-b", dbTable.AutorunTypeSchedule, scope, 1, params)
 	assert.NotEqual(t, hashA, hashB)
 }
 
@@ -113,8 +113,8 @@ func TestMakeHashID_DifferentInputs(t *testing.T) {
 	scope2 := []string{"school"}
 	params := map[string]interface{}{}
 
-	hash1 := makeHashID("ns1", 2, scope1, 1, params)
-	hash2 := makeHashID("ns1", 2, scope2, 1, params)
+	hash1 := makeHashID("ns1", dbTable.AutorunTypeSchedule, scope1, 1, params)
+	hash2 := makeHashID("ns1", dbTable.AutorunTypeSchedule, scope2, 1, params)
 	assert.NotEqual(t, hash1, hash2)
 }
 
@@ -151,4 +151,14 @@ func TestServiceAsInt(t *testing.T) {
 
 	val, ok = serviceAsInt(nil)
 	assert.False(t, ok)
+}
+
+func TestMergeScopes_UnionDedupe(t *testing.T) {
+	got := mergeScopes([]string{"s1/g1", "ALL"}, []string{"ALL", "s2/g2", " s1/g1 "})
+	assert.Equal(t, []string{"s1/g1", "ALL", "s2/g2"}, got)
+}
+
+func TestMergeScopes_EmptyOld(t *testing.T) {
+	assert.Equal(t, []string{"s1"}, mergeScopes(nil, []string{"s1"}))
+	assert.Empty(t, mergeScopes(nil, nil))
 }
