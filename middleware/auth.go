@@ -79,9 +79,9 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 	}
 }
 
-// AdminOrToken 密码验证可操作
-// 需要 JWT + 请求头 X-Verify-Password 匹配用户密码
-func AdminOrToken() gin.HandlerFunc {
+// JWTAndPassword 写操作鉴权：需要 JWT + 请求头 X-Verify-Password 匹配用户密码
+// 只读用户（readonly）一律拒绝写操作，无论密码是否正确
+func JWTAndPassword() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims := parseJWTFromHeader(c)
 
@@ -94,6 +94,13 @@ func AdminOrToken() gin.HandlerFunc {
 		// 安全修复：校验 JWT 绑定的 namespace 与请求 Host 解析的 namespace 一致
 		if !validateNamespaceBinding(c, claims) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "令牌与当前租户不匹配"})
+			c.Abort()
+			return
+		}
+
+		// 只读用户禁止写操作（此前任何角色只要知道密码都能写）
+		if claims.Role == "readonly" {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "只读用户无写权限"})
 			c.Abort()
 			return
 		}

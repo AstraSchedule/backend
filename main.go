@@ -66,7 +66,7 @@ func buildRouter() *gin.Engine {
 	adminGroup.DELETE("/web/users/:id", web.DeleteUser)
 
 	// 需 JWT + 密码验证的写接口
-	secureWrite := router.Group("/", middleware.AdminOrToken())
+	secureWrite := router.Group("/", middleware.JWTAndPassword())
 
 	// 内部服务间调用（仅需 API 密钥）
 	internalWrite := router.Group("/", middleware.InternalAuth())
