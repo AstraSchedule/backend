@@ -145,7 +145,7 @@ func TestUpsertAndFetchAutorunRecord(t *testing.T) {
 	record := &dbTable.AutorunRecord{
 		HashID:    "hash1",
 		Namespace: "ns1",
-		EType:     2,
+		EType:     dbTable.AutorunTypeSchedule,
 		Scope:     []string{"ALL"},
 		Parameters: map[string]interface{}{
 			"date": "2025-10-15",
@@ -175,7 +175,7 @@ func TestDeleteAutorunRecord(t *testing.T) {
 	record := &dbTable.AutorunRecord{
 		HashID:    "hash-delete",
 		Namespace: "ns1",
-		EType:     2,
+		EType:     dbTable.AutorunTypeSchedule,
 		Scope:     []string{"ALL"},
 		Parameters: map[string]interface{}{
 			"date": "2025-10-15",
@@ -318,7 +318,7 @@ func TestFetchAutorunRecords_WithHashID(t *testing.T) {
 	record := &dbTable.AutorunRecord{
 		HashID:     "hash-filter",
 		Namespace:  "ns1",
-		EType:      2,
+		EType:      dbTable.AutorunTypeSchedule,
 		Scope:      []string{"ALL"},
 		Parameters: map[string]interface{}{"date": "2025-10-15"},
 		Level:      1,
@@ -360,7 +360,7 @@ func TestUpsertAutorunRecord_Update(t *testing.T) {
 	record := &dbTable.AutorunRecord{
 		HashID:     "hash-update",
 		Namespace:  "ns1",
-		EType:      2,
+		EType:      dbTable.AutorunTypeSchedule,
 		Scope:      []string{"ALL"},
 		Parameters: map[string]interface{}{"date": "2025-10-15"},
 		Level:      1,

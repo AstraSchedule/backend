@@ -71,6 +71,12 @@ func ConnectDb() *gorm.DB {
 			dbErr = fmt.Errorf("database connection failed: %w", err)
 			return
 		}
+		// SQLite :memory: 的每个连接都是独立空库；锁为单连接，避免并发请求落到不同的库（测试/内存模式专用）
+		if dbType == "sqlite" && strings.HasPrefix(model.Configs.Db.Path, ":memory:") {
+			if sqlDB, err := db.DB(); err == nil {
+				sqlDB.SetMaxOpenConns(1)
+			}
+		}
 		dbInst = db
 		logrus.Info("Database connected successfully")
 	})

@@ -121,6 +121,9 @@ func PutSchedule(c *gin.Context) {
 		return
 	}
 
+	// 数据更新后内部广播，通知当前租户同年级在线客户端刷新（serverless 模式下自动跳过）
+	BroadcastSync(requestNamespace(c), school, grade)
+
 	c.JSON(http.StatusOK, gin.H{ // 200
 		"message": "课表更新成功",
 		"version": strconv.FormatInt(dataVersion.Version.Unix(), 10),

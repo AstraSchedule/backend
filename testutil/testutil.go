@@ -45,6 +45,12 @@ func InitTestDB() *gorm.DB {
 	if err != nil {
 		panic("testutil: failed to open sqlite memory db: " + err.Error())
 	}
+	// SQLite :memory: 每个连接是独立空库；锁为单连接，保证并发测试共享同一套表与数据
+	sqlDB, err := db.DB()
+	if err != nil {
+		panic("testutil: failed to get underlying sql db: " + err.Error())
+	}
+	sqlDB.SetMaxOpenConns(1)
 	if err := db.AutoMigrate(
 		&dbTable.Schedule{},
 		&dbTable.ClientConfig{},

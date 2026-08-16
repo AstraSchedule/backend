@@ -16,7 +16,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-resty/resty/v2"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var testDBInitialized = false
@@ -365,18 +367,92 @@ func TestWebSocketPlaceholder(t *testing.T) {
 	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusUpgradeRequired || w.Code == http.StatusBadRequest)
 }
 
-// BroadcastSyncConfig tests
+// BroadcastSync 内部广播测试（外部 /api/broadcast 入口已废弃移除，saas 版按租户 namespace 隔离）
 
-func TestBroadcastSyncConfig_NoAuth(t *testing.T) {
+func TestBroadcastSync_ServerlessDisabled(t *testing.T) {
 	ensureTestDB()
 
-	router := setupTestRouter()
-	router.POST("/api/broadcast/:school/:grade/:class_number", BroadcastSyncConfig)
+	orig := model.Configs.Run.Serverless
+	model.Configs.Run.Serverless = true
+	t.Cleanup(func() { model.Configs.Run.Serverless = orig })
 
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/api/broadcast/school1/grade1/class1", nil)
-	router.ServeHTTP(w, req)
+	// serverless 模式禁用 WebSocket，内部广播必须直接跳过
+	assert.Equal(t, 0, BroadcastSync("default", "school1", "grade1"))
+	assert.Equal(t, 0, BroadcastSyncSchool("default", "school1"))
+	assert.Equal(t, 0, BroadcastSyncAll("default"))
+}
 
-	// Without auth, should fail or succeed depending on middleware
-	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusUnauthorized)
+func TestBroadcastSync_NoClients(t *testing.T) {
+	ensureTestDB()
+
+	orig := model.Configs.Run.Serverless
+	model.Configs.Run.Serverless = false
+	t.Cleanup(func() { model.Configs.Run.Serverless = orig })
+
+	assert.Equal(t, 0, BroadcastSync("default", "nobody", "here"))
+	assert.Equal(t, 0, BroadcastSyncSchool("default", "nobody"))
+	assert.Equal(t, 0, BroadcastSyncAll("default"))
+}
+
+func TestBroadcastSync_DeliversToConnectedClient(t *testing.T) {
+	ensureTestDB()
+
+	orig := model.Configs.Run.Serverless
+	model.Configs.Run.Serverless = false
+	t.Cleanup(func() { model.Configs.Run.Serverless = orig })
+
+	// 起真实 WebSocket 服务：升级成功后把连接注册进 hub，模拟在线客户端
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		scope := wsScope{Namespace: "default", School: "39", Grade: "2023"}
+		clientWsHub.add(scope, "1", conn)
+		defer clientWsHub.remove(scope, conn)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// 等待服务端完成 hub 注册
+	deadline := time.Now().Add(2 * time.Second)
+	for clientWsHub.count(wsScope{Namespace: "default", School: "39", Grade: "2023"}) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.Equal(t, 1, clientWsHub.count(wsScope{Namespace: "default", School: "39", Grade: "2023"}))
+
+	// 年级级广播应送达
+	assert.Equal(t, 1, BroadcastSync("default", "39", "2023"))
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, msg, err := conn.ReadMessage()
+	require.NoError(t, err)
+	assert.Equal(t, "SyncConfig", string(msg))
+
+	// 学校级广播应送达
+	assert.Equal(t, 1, BroadcastSyncSchool("default", "39"))
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, msg, err = conn.ReadMessage()
+	require.NoError(t, err)
+	assert.Equal(t, "SyncConfig", string(msg))
+
+	// 全量广播应送达（仅限当前租户）
+	assert.Equal(t, 1, BroadcastSyncAll("default"))
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	_, msg, err = conn.ReadMessage()
+	require.NoError(t, err)
+	assert.Equal(t, "SyncConfig", string(msg))
+
+	// 租户隔离：其他 namespace / 其他学校不受影响
+	assert.Equal(t, 0, BroadcastSync("other-ns", "39", "2023"))
+	assert.Equal(t, 0, BroadcastSyncAll("other-ns"))
+	assert.Equal(t, 0, BroadcastSync("default", "other", "school"))
 }

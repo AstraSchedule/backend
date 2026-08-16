@@ -182,6 +182,11 @@ func PutCountdownRule(c *gin.Context) {
 	if recordID == "" {
 		recordID = makeCountdownID(ns, scope, schedules)
 	}
+	// 更新前取回旧作用域：scope 变更时，旧作用域的客户端同样需要刷新通知
+	var oldScopes []string
+	if rows, err := db.FetchCountdownRecordsNs(ns, recordID); err == nil && len(rows) > 0 {
+		oldScopes = rows[0].Scope
+	}
 	record := dbTable.CountdownRecord{
 		ID:        recordID,
 		Namespace: ns,
@@ -192,12 +197,19 @@ func PutCountdownRule(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	// 倒数日变更影响客户端倒数日展示，按新旧作用域并集广播刷新
+	broadcastScopes(ns, mergeScopes(oldScopes, scope))
 	c.JSON(http.StatusOK, gin.H{"status": 200, "id": recordID})
 }
 
 func DeleteCountdownRecord(c *gin.Context) {
 	ns := middleware.GetNamespace(c)
 	id := c.Param("id")
+	// 删除前取回记录作用域，删除后按原作用域广播刷新
+	var scopes []string
+	if rows, err := db.FetchCountdownRecordsNs(ns, id); err == nil && len(rows) > 0 {
+		scopes = rows[0].Scope
+	}
 	affected, err := db.DeleteCountdownRecordNs(ns, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -207,5 +219,6 @@ func DeleteCountdownRecord(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"detail": "记录不存在"})
 		return
 	}
+	broadcastScopes(ns, scopes)
 	c.JSON(http.StatusOK, gin.H{"status": 200, "deleted": affected, "id": id})
 }
