@@ -192,10 +192,49 @@ func TestJWTAndPassword_ReadonlyForbidden(t *testing.T) {
 	router := gin.New()
 	router.POST("/test", JWTAndPassword(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
 
-	// 只读用户即使密码正确也禁止写操作
+	// 只读用户无论密码正确、错误还是缺失，都必须 403：拒绝发生在密码校验之前
+	cases := map[string]map[string]string{
+		"密码正确": {"Authorization": "Bearer " + token, "X-Verify-Password": "test123"},
+		"密码错误": {"Authorization": "Bearer " + token, "X-Verify-Password": "wrong"},
+		"无密码":   {"Authorization": "Bearer " + token},
+	}
+	for name, headers := range cases {
+		t.Run(name, func(t *testing.T) {
+			w := doMwRequest(router, "POST", "/test", "{}", headers)
+			assert.Equal(t, http.StatusForbidden, w.Code)
+		})
+	}
+}
+
+func TestJWTAndPassword_DowngradedAdminForbidden(t *testing.T) {
+	setupMwEnv(t)
+	user := createMwUser(t, "mwdowngradeduser", "test123", "admin")
+	token := mwToken(t, user)
+
+	// 用户被降级为 readonly 后，旧 token 内嵌角色仍为 admin，但必须按数据库当前角色拒绝写操作
+	require.NoError(t, db.GetDB().Model(user).Update("role", "readonly").Error)
+
+	router := gin.New()
+	router.POST("/test", JWTAndPassword(), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
 	w := doMwRequest(router, "POST", "/test", "{}", map[string]string{
 		"Authorization": "Bearer " + token, "X-Verify-Password": "test123",
 	})
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestRequireRole_DowngradedAdminForbidden(t *testing.T) {
+	setupMwEnv(t)
+	user := createMwUser(t, "mwrruser", "test123", "admin")
+	token := mwToken(t, user)
+
+	// 用户被降级为 readonly 后，旧 token 不得再访问 RequireRole 管理接口
+	require.NoError(t, db.GetDB().Model(user).Update("role", "readonly").Error)
+
+	router := gin.New()
+	router.GET("/test", JWTAuthMiddleware(), RequireRole("admin"), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	w := doMwRequest(router, "GET", "/test", "", map[string]string{"Authorization": "Bearer " + token})
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 

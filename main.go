@@ -90,6 +90,8 @@ func buildRouter() *gin.Engine {
 	// 菜单/结构（读接口，与既有模式一致）；statistic 需 JWT 认证（防跨租户泄露）
 	router.GET("/web/menu", web.GetMenu)
 	router.GET("/web/structure", web.GetStructure)
+	// 注意：GET /web/backup/export 虽为读操作，但涉及全量数据导出，仍要求 JWT + 密码验证（仅 admin），
+	// readonly 用户不可导出备份（JWTAndPassword 拒绝），该限制由 main_test.go 认证矩阵锁定。
 	secureWrite.GET("/web/backup/export", web.ExportBackup)
 	secureWrite.POST("/web/backup/import", web.ImportBackup)
 	// 完整备份导出/导入（支持 overwrite/skip 模式）
