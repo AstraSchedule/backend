@@ -260,62 +260,56 @@ func TestRouteTable_AuthMatrix(t *testing.T) {
 		w := contractRequest(t, router, "PUT", "/web/countdown", body, authPwd(adminToken, "test123"))
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
-	t.Run("school_w 写本校课表放行", func(t *testing.T) {
-		// 客户端写路由过 JWTAndPassword + RequireScope；空 body 由 handler 校验（非 401/403 即鉴权放行）
-		sw := createContractUserScoped(t, "schoolw1", "test123", "school_w", "s1")
-		w := contractRequest(t, router, "PUT", "/s1/g1/c1", map[string]interface{}{}, authPwd(sw, "test123"))
-		assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-		assert.NotEqual(t, http.StatusForbidden, w.Code)
-	})
-	t.Run("school_w 写他校课表被拒 403", func(t *testing.T) {
-		sw := createContractUserScoped(t, "schoolw2", "test123", "school_w", "s1")
-		w := contractRequest(t, router, "PUT", "/s2/g1/c1", map[string]interface{}{}, authPwd(sw, "test123"))
-		assert.Equal(t, http.StatusForbidden, w.Code)
-	})
-	t.Run("grade_w 写本年级放行", func(t *testing.T) {
-		gw := createContractUserScoped(t, "gradew1", "test123", "grade_w", "s1/g1")
-		w := contractRequest(t, router, "PUT", "/s1/g1/c2", map[string]interface{}{}, authPwd(gw, "test123"))
-		assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-		assert.NotEqual(t, http.StatusForbidden, w.Code)
-	})
-	t.Run("grade_w 写他年级被拒 403", func(t *testing.T) {
-		gw := createContractUserScoped(t, "gradew2", "test123", "grade_w", "s1/g1")
-		w := contractRequest(t, router, "PUT", "/s1/g2/c1", map[string]interface{}{}, authPwd(gw, "test123"))
-		assert.Equal(t, http.StatusForbidden, w.Code)
-	})
-	t.Run("class_w 写本班放行", func(t *testing.T) {
-		cw := createContractUserScoped(t, "classw1", "test123", "class_w", "s1/g1/c1")
-		w := contractRequest(t, router, "PUT", "/s1/g1/c1", map[string]interface{}{}, authPwd(cw, "test123"))
-		assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-		assert.NotEqual(t, http.StatusForbidden, w.Code)
-	})
-	t.Run("class_w 写他班被拒 403", func(t *testing.T) {
-		cw := createContractUserScoped(t, "classw2", "test123", "class_w", "s1/g1/c1")
-		w := contractRequest(t, router, "PUT", "/s1/g1/c2", map[string]interface{}{}, authPwd(cw, "test123"))
-		assert.Equal(t, http.StatusForbidden, w.Code)
-	})
-	t.Run("非 admin 写 ALL 级规则被拒 403", func(t *testing.T) {
-		sw := createContractUserScoped(t, "schoolw3", "test123", "school_w", "s1")
-		body := map[string]interface{}{
-			"scope":     []string{"ALL"},
-			"schedules": []map[string]interface{}{
-				{"name": "x", "date": "2026-01-01", "priority": 1},
-			},
+	// 客户端课表写路由（JWTAndPassword + RequireScope）：按角色/作用域矩阵驱动；
+	// 空 body 由 handler 校验，非 401/403 即鉴权放行
+	scopeWriteCases := []struct {
+		name, username, role, scope, path string
+		forbidden                          bool
+	}{
+		{"school_w 写本校课表放行", "schoolw1", "school_w", "s1", "/s1/g1/c1", false},
+		{"school_w 写他校课表被拒 403", "schoolw2", "school_w", "s1", "/s2/g1/c1", true},
+		{"grade_w 写本年级放行", "gradew1", "grade_w", "s1/g1", "/s1/g1/c2", false},
+		{"grade_w 写他年级被拒 403", "gradew2", "grade_w", "s1/g1", "/s1/g2/c1", true},
+		{"class_w 写本班放行", "classw1", "class_w", "s1/g1/c1", "/s1/g1/c1", false},
+		{"class_w 写他班被拒 403", "classw2", "class_w", "s1/g1/c1", "/s1/g1/c2", true},
+	}
+	for _, tc := range scopeWriteCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tok := createContractUserScoped(t, tc.username, "test123", tc.role, tc.scope)
+			w := contractRequest(t, router, "PUT", tc.path, map[string]interface{}{}, authPwd(tok, "test123"))
+			if tc.forbidden {
+				assert.Equal(t, http.StatusForbidden, w.Code)
+				return
+			}
+			assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+			assert.NotEqual(t, http.StatusForbidden, w.Code)
+		})
+	}
+
+	// 倒数日写路由（handler 级 CheckUserScopeString）：按作用域矩阵驱动
+	countdownBody := func(scopes []string, name string) map[string]interface{} {
+		return map[string]interface{}{
+			"scope":     scopes,
+			"schedules": []map[string]interface{}{{"name": name, "date": "2026-01-01", "priority": 1}},
 		}
-		w := contractRequest(t, router, "PUT", "/web/countdown", body, authPwd(sw, "test123"))
-		assert.Equal(t, http.StatusForbidden, w.Code)
-	})
-	t.Run("school_w 写本校倒数日放行", func(t *testing.T) {
-		sw := createContractUserScoped(t, "schoolw4", "test123", "school_w", "s1")
-		body := map[string]interface{}{
-			"scope":     []string{"s1/g1/c1"},
-			"schedules": []map[string]interface{}{
-				{"name": "x", "date": "2026-01-01", "priority": 1},
-			},
-		}
-		w := contractRequest(t, router, "PUT", "/web/countdown", body, authPwd(sw, "test123"))
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
+	}
+	countdownCases := []struct {
+		name, username, role, scope string
+		bodyScopes                  []string
+		want                        int
+	}{
+		{"非 admin 写 ALL 级规则被拒 403", "schoolw3", "school_w", "s1", []string{"ALL"}, http.StatusForbidden},
+		{"school_w 写本校倒数日放行", "schoolw4", "school_w", "s1", []string{"s1/g1/c1"}, http.StatusOK},
+		{"school_w 且 Scope=ALL 写 ALL 被拒 403", "schoolwall1", "school_w", "ALL", []string{"ALL"}, http.StatusForbidden},
+	}
+	for _, tc := range countdownCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tok := createContractUserScoped(t, tc.username, "test123", tc.role, tc.scope)
+			w := contractRequest(t, router, "PUT", "/web/countdown", countdownBody(tc.bodyScopes, "x"), authPwd(tok, "test123"))
+			assert.Equal(t, tc.want, w.Code)
+		})
+	}
+
 	t.Run("收窄 scope 后旧 token 越界写被拒 403", func(t *testing.T) {
 		// admin/ALL 用户被收窄为 class_w(s1/g1/c1) 后，旧 token 内嵌 admin/ALL，
 		// 但作用域判定以数据库当前值为准，越界写必须 403
@@ -325,43 +319,23 @@ func TestRouteTable_AuthMatrix(t *testing.T) {
 		w := contractRequest(t, router, "PUT", "/s1/g1/c2", map[string]interface{}{}, authPwd(narrowed, "test123"))
 		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
-	t.Run("school_w 且 Scope=ALL 写 ALL 规则被拒 403", func(t *testing.T) {
-		// school_w 若自身 Scope 为 ALL，"ALL" 会被解析成 school 前缀通过校验，必须显式拒绝
-		sw := createContractUserScoped(t, "schoolwall1", "test123", "school_w", "ALL")
-		body := map[string]interface{}{
-			"scope":     []string{"ALL"},
-			"schedules": []map[string]interface{}{
-				{"name": "x", "date": "2026-01-01", "priority": 1},
-			},
-		}
-		w := contractRequest(t, router, "PUT", "/web/countdown", body, authPwd(sw, "test123"))
-		assert.Equal(t, http.StatusForbidden, w.Code)
-	})
+
+	// class_w 借 recordID 更新他人双作用域记录：旧作用域含无权 c2，必须 403
 	t.Run("class_w 覆盖他人作用域的倒数日被拒 403", func(t *testing.T) {
-		// admin 建双作用域记录；class_w 借 recordID 提交自身作用域更新：旧作用域含无权 c2，必须 403
-		body := map[string]interface{}{
-			"scope":     []string{"s1/g1/c1", "s1/g1/c2"},
-			"schedules": []map[string]interface{}{
-				{"name": "x", "date": "2026-01-01", "priority": 1},
-			},
-		}
-		w := contractRequest(t, router, "PUT", "/web/countdown", body, authPwd(adminToken, "test123"))
+		w := contractRequest(t, router, "PUT", "/web/countdown",
+			countdownBody([]string{"s1/g1/c1", "s1/g1/c2"}, "x"), authPwd(adminToken, "test123"))
 		require.Equal(t, http.StatusOK, w.Code)
 		id := decodeJSON(t, w)["id"].(string)
 
 		cw := createContractUserScoped(t, "classw3", "test123", "class_w", "s1/g1/c1")
-		body2 := map[string]interface{}{
-			"id":        id,
-			"scope":     []string{"s1/g1/c1"},
-			"schedules": []map[string]interface{}{
-				{"name": "y", "date": "2026-01-01", "priority": 1},
-			},
-		}
+		body2 := countdownBody([]string{"s1/g1/c1"}, "y")
+		body2["id"] = id
 		w = contractRequest(t, router, "PUT", "/web/countdown", body2, authPwd(cw, "test123"))
 		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
+
+	// class_w 借 id 更新他人双作用域自动任务：旧作用域含无权 c2，必须 403
 	t.Run("class_w 覆盖他人作用域的自动任务被拒 403", func(t *testing.T) {
-		// admin 建双作用域规则；class_w 借 id 提交自身作用域更新：旧作用域含无权 c2，必须 403
 		body := map[string]interface{}{
 			"type": 1, "scope": []string{"s1/g1/c1", "s1/g1/c2"}, "priority": 1,
 			"content": map[string]interface{}{"date": "2026-01-01", "timetableId": "exam"},
