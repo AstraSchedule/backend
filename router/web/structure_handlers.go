@@ -25,8 +25,14 @@ func CreateSchool(c *gin.Context) {
 		return
 	}
 
+	// 学校是否存在以关联的科目行判断（学校本身没有独立表行，
+	// 按 Schedule 行判断会在“学校尚无班级”时漏判，导致重复创建返回 200）
 	var count int64
-	db.GetDB().Model(&dbTable.Schedule{}).Where(whereSchool, req.Name).Count(&count)
+	countRes := db.GetDB().Model(&dbTable.Subject{}).Where(whereSchool, req.Name).Count(&count)
+	if countRes.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": countRes.Error.Error()})
+		return
+	}
 	if count > 0 {
 		c.JSON(http.StatusConflict, gin.H{"detail": "学校已存在"})
 		return
@@ -69,8 +75,14 @@ func CreateGrade(c *gin.Context) {
 		return
 	}
 
+	// 年级是否存在以默认科目/作息行判断（学校与年级本身没有独立表行，
+	// 按 Schedule 行判断会在“年级尚无班级”时漏判，导致重复创建返回 200）
 	var count int64
-	db.GetDB().Model(&dbTable.Schedule{}).Where(whereSchoolGrade, school, req.Name).Count(&count)
+	countRes := db.GetDB().Model(&dbTable.Subject{}).Where(whereSchoolGrade, school, req.Name).Count(&count)
+	if countRes.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": countRes.Error.Error()})
+		return
+	}
 	if count > 0 {
 		c.JSON(http.StatusConflict, gin.H{"detail": "年级已存在"})
 		return
@@ -88,7 +100,22 @@ func CreateGrade(c *gin.Context) {
 			},
 		},
 	}
-	db.GetDB().Clauses(clause.OnConflict{DoNothing: true}).Create(&subject)
+	// 事务内原子创建默认科目与作息：以 Subject 行的插入结果作为年级是否已存在的最终裁决，
+	// 并发重复请求只会有一个成功插入（另一个 RowsAffected==0 -> 409）
+	tx := db.GetDB().Begin()
+	defer func() { if recover() != nil { tx.Rollback() } }()
+
+	subjectRes := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&subject)
+	if subjectRes.Error != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": subjectRes.Error.Error()})
+		return
+	}
+	if subjectRes.RowsAffected == 0 {
+		tx.Rollback()
+		c.JSON(http.StatusConflict, gin.H{"detail": "年级已存在"})
+		return
+	}
 
 	timetable := dbTable.Timetable{
 		School: school,
@@ -102,7 +129,16 @@ func CreateGrade(c *gin.Context) {
 			Start:   time.Now().Format("2006-01-02"),
 		},
 	}
-	db.GetDB().Clauses(clause.OnConflict{DoNothing: true}).Create(&timetable)
+	timetableRes := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&timetable)
+	if timetableRes.Error != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": timetableRes.Error.Error()})
+		return
+	}
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "年级创建成功"})
 }
