@@ -17,6 +17,7 @@ const (
 	whereSchool           = "school = ?"
 	whereSchoolGrade      = "school = ? AND grade = ?"
 	whereSchoolGradeClass = "school = ? AND grade = ? AND class = ?"
+	whereNamespaceAnd     = "namespace = ? AND "
 )
 
 func CreateSchool(c *gin.Context) {
@@ -174,7 +175,7 @@ func DeleteSchool(c *gin.Context) {
 		}
 	}()
 
-	if err := deleteRecordsTx(tx, "namespace = ? AND "+whereSchool, []interface{}{ns, school},
+	if err := deleteRecordsTx(tx, whereNamespaceAnd+whereSchool, []interface{}{ns, school},
 		&dbTable.Schedule{}, &dbTable.ClientConfig{}, &dbTable.DataVersion{},
 		&dbTable.Subject{}, &dbTable.Timetable{}); err != nil {
 		rollbackAnd500(c, tx, err)
@@ -304,7 +305,7 @@ func DeleteGrade(c *gin.Context) {
 		}
 	}()
 
-	if err := deleteRecordsTx(tx, "namespace = ? AND "+whereSchoolGrade, []interface{}{ns, school, grade},
+	if err := deleteRecordsTx(tx, whereNamespaceAnd+whereSchoolGrade, []interface{}{ns, school, grade},
 		&dbTable.Schedule{}, &dbTable.ClientConfig{}, &dbTable.DataVersion{},
 		&dbTable.Subject{}, &dbTable.Timetable{}); err != nil {
 		rollbackAnd500(c, tx, err)
@@ -458,7 +459,7 @@ func DeleteClass(c *gin.Context) {
 		}
 	}()
 
-	if err := deleteRecordsTx(tx, "namespace = ? AND "+whereSchoolGradeClass, []interface{}{ns, school, grade, classNumber},
+	if err := deleteRecordsTx(tx, whereNamespaceAnd+whereSchoolGradeClass, []interface{}{ns, school, grade, classNumber},
 		&dbTable.Schedule{}, &dbTable.ClientConfig{}, &dbTable.DataVersion{}); err != nil {
 		rollbackAnd500(c, tx, err)
 		return
