@@ -66,7 +66,7 @@ func buildRouter() *gin.Engine {
 	adminGroup.DELETE("/web/users/:id", web.DeleteUser)
 
 	// 需 JWT + 密码验证的写接口
-	secureWrite := router.Group("/", middleware.AdminOrToken())
+	secureWrite := router.Group("/", middleware.JWTAndPassword())
 
 	// 内部服务间调用（仅需 API 密钥）
 	internalWrite := router.Group("/", middleware.InternalAuth())
@@ -94,6 +94,8 @@ func buildRouter() *gin.Engine {
 	// 菜单/结构（读接口，与既有模式一致）；statistic 需 JWT 认证（防跨租户泄露）
 	router.GET("/web/menu", web.GetMenu)
 	router.GET("/web/structure", web.GetStructure)
+	// 注意：GET /web/backup/export 虽为读操作，但涉及全量数据导出，仍要求 JWT + 密码验证（非 readonly 用户），
+	// readonly 用户不可导出备份（JWTAndPassword 拒绝），该限制由 main_test.go 认证矩阵锁定。
 	secureWrite.GET("/web/backup/export", web.ExportBackup)
 	secureWrite.POST("/web/backup/import", web.ImportBackup)
 	// 完整备份导出/导入（支持 overwrite/skip 模式）
@@ -102,11 +104,11 @@ func buildRouter() *gin.Engine {
 
 	// 学校/年级/班级管理
 	secureWrite.POST("/web/schools", web.CreateSchool)
-	secureWrite.DELETE("/web/schools/:school", web.DeleteSchool)
+	secureWrite.DELETE("/web/schools/:school", middleware.RequireScope(), web.DeleteSchool)
 	secureWrite.POST("/web/schools/:school/grades", web.CreateGrade)
-	secureWrite.DELETE("/web/schools/:school/grades/:grade", web.DeleteGrade)
+	secureWrite.DELETE("/web/schools/:school/grades/:grade", middleware.RequireScope(), web.DeleteGrade)
 	secureWrite.POST("/web/schools/:school/grades/:grade/classes", web.CreateClass)
-	secureWrite.DELETE("/web/schools/:school/grades/:grade/classes/:class_number", web.DeleteClass)
+	secureWrite.DELETE("/web/schools/:school/grades/:grade/classes/:class_number", middleware.RequireScope(), web.DeleteClass)
 
 	// 配置接口
 	router.GET("/web/config/:school/:grade/subjects/options", web.GetSubjectsOptions)
@@ -122,7 +124,7 @@ func buildRouter() *gin.Engine {
 
 	router.GET("/web/config/:school/:grade/:class_number/settings", web.GetSettings)
 	secureWrite.PUT("/web/config/:school/:grade/:class_number/settings", middleware.RequireScope(), web.PutSettings)
-	secureWrite.POST("/web/config/copy", middleware.RequireScope(), web.CopyConfig)
+	secureWrite.POST("/web/config/copy", web.CopyConfig)
 
 	// 自动任务
 	router.GET("/web/autorun", web.GetAutorunStatus)

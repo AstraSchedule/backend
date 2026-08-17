@@ -399,6 +399,12 @@ func CopyConfig(c *gin.Context) {
 		return
 	}
 
+	// 作用域校验：来源与目标都必须在用户权限范围内（非 admin 按数据库当前作用域判定）
+	if !middleware.CheckUserScope(c, payload.From.School, payload.From.Grade, fromClass) ||
+		!middleware.CheckUserScope(c, payload.To.School, payload.To.Grade, toClass) {
+		return
+	}
+
 	dbConn := db.GetDB()
 	src, ok := loadCopySourceConfig(c, dbConn, ns, payload, fromClass)
 	if !ok {

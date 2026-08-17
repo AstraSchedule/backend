@@ -5,9 +5,11 @@ import (
 	"AstraScheduleServerGo/middleware"
 	"AstraScheduleServerGo/model/dbTable"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -15,6 +17,7 @@ const (
 	whereSchool           = "school = ?"
 	whereSchoolGrade      = "school = ? AND grade = ?"
 	whereSchoolGradeClass = "school = ? AND grade = ? AND class = ?"
+	whereNamespaceAnd     = "namespace = ? AND "
 )
 
 func CreateSchool(c *gin.Context) {
@@ -23,6 +26,14 @@ func CreateSchool(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "学校名称不能为空"})
+		return
+	}
+	if rejectReservedSchoolName(c, req.Name) {
+		return
+	}
+
+	// 作用域校验：非 admin 用户只能创建自身 scope 对应的学校（按数据库当前作用域判定）
+	if !middleware.CheckUserScope(c, req.Name, "", "") {
 		return
 	}
 
@@ -46,10 +57,111 @@ func CreateSchool(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": 200, "message": "学校创建成功"})
 }
 
+// rejectReservedSchoolName 拒绝保留值 "ALL" 与含作用域分隔符 / 的学校名：
+// ALL 会与自动任务全局规则的作用域冲突（删除学校 "ALL" 会按前缀匹配误删全局规则）；
+// 含 / 会破坏作用域前缀匹配（如班级名 1/2 会使删除班级 1 时误删该规则）。
+// 返回 true 表示已写入 400 响应，调用方直接 return。
+func rejectReservedSchoolName(c *gin.Context, school string) bool {
+	if school == "ALL" {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "学校名称不能为保留值 ALL"})
+		return true
+	}
+	if strings.Contains(school, "/") {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "学校名称不能包含作用域分隔符 /"})
+		return true
+	}
+	return false
+}
+
+// rejectInvalidChildName 拒绝含作用域分隔符 / 的年级/班级名：含 / 会破坏作用域前缀匹配，
+// 导致结构删除时误删其它班级的规则。返回 true 表示已写入 400 响应，调用方直接 return。
+func rejectInvalidChildName(c *gin.Context, name string) bool {
+	if strings.Contains(name, "/") {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "名称不能包含作用域分隔符 /"})
+		return true
+	}
+	return false
+}
+
+// rollbackAnd500 回滚事务并写入 500 响应，供删除流程统一处理错误。
+func rollbackAnd500(c *gin.Context, tx *gorm.DB, err error) {
+	tx.Rollback()
+	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+}
+
+// commitOr500 提交事务；失败时写入 500 响应并返回 false。
+func commitOr500(c *gin.Context, tx *gorm.DB) bool {
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return false
+	}
+	return true
+}
+
+// deleteRecordsTx 在事务内按作用域条件删除多张表，任一条语句失败即返回错误。
+// 此前各 Delete 语句的返回值被忽略，SQL 错误（如列不存在）会被静默吞掉。
+func deleteRecordsTx(tx *gorm.DB, where string, args []interface{}, models ...interface{}) error {
+	for _, m := range models {
+		if err := tx.Where(where, args...).Delete(m).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteAutorunRecordsByScopePrefix 在事务连接上移除当前租户内作用域前缀匹配的自动任务规则作用域。
+// AutorunRecord 没有 school 列，作用域存于 Scope JSON 字段，需逐条过滤：
+// 仅移除匹配的作用域；无剩余作用域时删除整条记录，否则回写剩余作用域，
+// 避免整行删除误伤同一记录中的无关作用域。scope "ALL" 的全局规则不受影响
+//（调用方已拒绝保留值 ALL）。
+// 已过期规则（status=2）不会再被规则引擎命中，删除与否无差异：由 SQL WHERE 下推过滤
+//（过期数据通常远多于待生效/生效中，下推可减少载入行数），保留历史数据。
+// 所有查询限定 namespace，防止跨租户误删。
+// 注意必须复用 tx 连接：内存库单连接池下在事务未提交时调用 db.GetDB() 会死锁。
+func deleteAutorunRecordsByScopePrefix(tx *gorm.DB, ns, prefix string) error {
+	var rows []dbTable.AutorunRecord
+	// status：0 待生效 / 1 生效中 / 2 已过期（与 db.RefreshAutorunStatuses 维护值一致）
+	if err := tx.Where("namespace = ? AND status <> ?", ns, 2).Find(&rows).Error; err != nil {
+		return err
+	}
+	for _, r := range rows {
+		remaining := make([]string, 0, len(r.Scope))
+		for _, s := range r.Scope {
+			if s == prefix || strings.HasPrefix(s, prefix+"/") {
+				continue
+			}
+			remaining = append(remaining, s)
+		}
+		if len(remaining) == len(r.Scope) {
+			continue // 无匹配作用域，记录不动
+		}
+		if len(remaining) == 0 {
+			if err := tx.Where("namespace = ? AND hash_id = ?", ns, r.HashID).Delete(&dbTable.AutorunRecord{}).Error; err != nil {
+				return err
+			}
+			continue
+		}
+		// 取出整条记录回写剩余作用域（Save 走 Scope 字段的 JSON serializer；
+		// Update("scope", []string) 不经过 serializer 会写入非法 JSON）
+		var rec dbTable.AutorunRecord
+		if err := tx.Where("namespace = ? AND hash_id = ?", ns, r.HashID).First(&rec).Error; err != nil {
+			return err
+		}
+		rec.Scope = remaining
+		if err := tx.Save(&rec).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func DeleteSchool(c *gin.Context) {
 	school := c.Param("school")
 	if school == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "学校名称不能为空"})
+		return
+	}
+	if rejectReservedSchoolName(c, school) {
 		return
 	}
 
@@ -63,15 +175,18 @@ func DeleteSchool(c *gin.Context) {
 		}
 	}()
 
-	tx.Where("namespace = ?", ns).Where(whereSchool, school).Delete(&dbTable.Schedule{})
-	tx.Where("namespace = ?", ns).Where(whereSchool, school).Delete(&dbTable.ClientConfig{})
-	tx.Where("namespace = ?", ns).Where(whereSchool, school).Delete(&dbTable.DataVersion{})
-	tx.Where("namespace = ?", ns).Where(whereSchool, school).Delete(&dbTable.Subject{})
-	tx.Where("namespace = ?", ns).Where(whereSchool, school).Delete(&dbTable.Timetable{})
-	tx.Where("namespace = ?", ns).Where(whereSchool, school).Delete(&dbTable.AutorunRecord{})
+	if err := deleteRecordsTx(tx, whereNamespaceAnd+whereSchool, []interface{}{ns, school},
+		&dbTable.Schedule{}, &dbTable.ClientConfig{}, &dbTable.DataVersion{},
+		&dbTable.Subject{}, &dbTable.Timetable{}); err != nil {
+		rollbackAnd500(c, tx, err)
+		return
+	}
+	if err := deleteAutorunRecordsByScopePrefix(tx, ns, school); err != nil {
+		rollbackAnd500(c, tx, err)
+		return
+	}
 
-	if err := tx.Commit().Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if !commitOr500(c, tx) {
 		return
 	}
 	broadcastScopes(ns, []string{school})
@@ -80,11 +195,22 @@ func DeleteSchool(c *gin.Context) {
 
 func CreateGrade(c *gin.Context) {
 	school := c.Param("school")
+	if rejectReservedSchoolName(c, school) {
+		return
+	}
 	var req struct {
 		Name string `json:"name"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "年级名称不能为空"})
+		return
+	}
+	if rejectInvalidChildName(c, req.Name) {
+		return
+	}
+
+	// 作用域校验：非 admin 用户只能创建自身 scope 内的年级
+	if !middleware.CheckUserScope(c, school, req.Name, "") {
 		return
 	}
 
@@ -165,6 +291,9 @@ func CreateGrade(c *gin.Context) {
 func DeleteGrade(c *gin.Context) {
 	school := c.Param("school")
 	grade := c.Param("grade")
+	if rejectReservedSchoolName(c, school) {
+		return
+	}
 
 	// 安全修复：删除必须限定当前请求的 namespace，防止跨租户删除数据
 	ns := middleware.GetNamespace(c)
@@ -176,16 +305,18 @@ func DeleteGrade(c *gin.Context) {
 		}
 	}()
 
-	tx.Where("namespace = ?", ns).Where(whereSchoolGrade, school, grade).Delete(&dbTable.Schedule{})
-	tx.Where("namespace = ?", ns).Where(whereSchoolGrade, school, grade).Delete(&dbTable.ClientConfig{})
-	tx.Where("namespace = ?", ns).Where(whereSchoolGrade, school, grade).Delete(&dbTable.DataVersion{})
-	tx.Where("namespace = ?", ns).Where(whereSchoolGrade, school, grade).Delete(&dbTable.Subject{})
-	tx.Where("namespace = ?", ns).Where(whereSchoolGrade, school, grade).Delete(&dbTable.Timetable{})
-	// 删除该年级下所有班级的自动任务
-	tx.Where("namespace = ?", ns).Where(whereSchoolGrade, school, grade).Delete(&dbTable.AutorunRecord{})
+	if err := deleteRecordsTx(tx, whereNamespaceAnd+whereSchoolGrade, []interface{}{ns, school, grade},
+		&dbTable.Schedule{}, &dbTable.ClientConfig{}, &dbTable.DataVersion{},
+		&dbTable.Subject{}, &dbTable.Timetable{}); err != nil {
+		rollbackAnd500(c, tx, err)
+		return
+	}
+	if err := deleteAutorunRecordsByScopePrefix(tx, ns, school+"/"+grade); err != nil {
+		rollbackAnd500(c, tx, err)
+		return
+	}
 
-	if err := tx.Commit().Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if !commitOr500(c, tx) {
 		return
 	}
 	broadcastScopes(ns, []string{school + "/" + grade})
@@ -195,11 +326,22 @@ func DeleteGrade(c *gin.Context) {
 func CreateClass(c *gin.Context) {
 	school := c.Param("school")
 	grade := c.Param("grade")
+	if rejectReservedSchoolName(c, school) {
+		return
+	}
 	var req struct {
 		Name string `json:"name"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "班级名称不能为空"})
+		return
+	}
+	if rejectInvalidChildName(c, req.Name) {
+		return
+	}
+
+	// 作用域校验：非 admin 用户只能创建自身 scope 内的班级
+	if !middleware.CheckUserScope(c, school, grade, req.Name) {
 		return
 	}
 
@@ -303,6 +445,9 @@ func DeleteClass(c *gin.Context) {
 	school := c.Param("school")
 	grade := c.Param("grade")
 	classNumber := c.Param("class_number")
+	if rejectReservedSchoolName(c, school) {
+		return
+	}
 
 	// 安全修复：删除必须限定当前请求的 namespace，防止跨租户删除数据
 	ns := middleware.GetNamespace(c)
@@ -314,12 +459,17 @@ func DeleteClass(c *gin.Context) {
 		}
 	}()
 
-	tx.Where("namespace = ?", ns).Where(whereSchoolGradeClass, school, grade, classNumber).Delete(&dbTable.Schedule{})
-	tx.Where("namespace = ?", ns).Where(whereSchoolGradeClass, school, grade, classNumber).Delete(&dbTable.ClientConfig{})
-	tx.Where("namespace = ?", ns).Where(whereSchoolGradeClass, school, grade, classNumber).Delete(&dbTable.DataVersion{})
+	if err := deleteRecordsTx(tx, whereNamespaceAnd+whereSchoolGradeClass, []interface{}{ns, school, grade, classNumber},
+		&dbTable.Schedule{}, &dbTable.ClientConfig{}, &dbTable.DataVersion{}); err != nil {
+		rollbackAnd500(c, tx, err)
+		return
+	}
+	if err := deleteAutorunRecordsByScopePrefix(tx, ns, school+"/"+grade+"/"+classNumber); err != nil {
+		rollbackAnd500(c, tx, err)
+		return
+	}
 
-	if err := tx.Commit().Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if !commitOr500(c, tx) {
 		return
 	}
 	broadcastScopes(ns, []string{school + "/" + grade})

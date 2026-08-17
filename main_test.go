@@ -11,7 +11,6 @@ import (
 	"AstraScheduleServerGo/db"
 	"AstraScheduleServerGo/model"
 	"AstraScheduleServerGo/model/dbTable"
-	"AstraScheduleServerGo/service"
 	"AstraScheduleServerGo/testutil"
 
 	"github.com/gin-gonic/gin"
@@ -73,13 +72,13 @@ func decodeJSON(t *testing.T, w *httptest.ResponseRecorder) map[string]interface
 
 // createContractUser 创建测试用户并返回登录 token（默认 admin/test123）
 func createContractUser(t *testing.T, username, password, role string) string {
+	return createContractUserScoped(t, username, password, role, "ALL")
+}
+
+// createContractUserScoped 创建指定角色与作用域的测试用户并返回登录 token
+func createContractUserScoped(t *testing.T, username, password, role, scope string) string {
 	t.Helper()
-	hash, err := service.HashPassword(password)
-	require.NoError(t, err)
-	require.NoError(t, db.GetDB().Where("username = ?", username).Delete(&dbTable.User{}).Error)
-	require.NoError(t, db.GetDB().Create(&dbTable.User{Namespace: "default",
-		Username: username, PasswordHash: hash, Role: role, Scope: "ALL",
-	}).Error)
+	testutil.CreateUser(t, db.GetDB(), "default", username, password, role, scope)
 
 	w := contractRequest(t, buildRouter(), "POST", "/web/auth/login",
 		map[string]string{"username": username, "password": password}, nil)
@@ -223,6 +222,28 @@ func TestRouteTable_AuthMatrix(t *testing.T) {
 			map[string]string{"username": "x1", "password": "test123", "role": "readonly"}, auth(readonlyToken))
 		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
+	t.Run("readonly 写接口被拒 403", func(t *testing.T) {
+		// 只读用户即使密码正确也不能通过写接口认证
+		w := contractRequest(t, router, "PUT", "/web/countdown", map[string]interface{}{}, authPwd(readonlyToken, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("readonly 导出备份被拒 403", func(t *testing.T) {
+		// 导出备份虽是 GET，但涉及全量数据下载，走 JWTAndPassword 组：readonly 一律拒绝
+		w := contractRequest(t, router, "GET", "/web/backup/export", nil, auth(readonlyToken))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("降级用户的旧 admin token 被拒", func(t *testing.T) {
+		// admin 被降级为 readonly 后，旧 token 内嵌角色仍为 admin，
+		// 但中间件以数据库当前角色为准：管理接口与写接口都必须拒绝
+		downgradedToken := createContractUser(t, "downgraded1", "test123", "admin")
+		require.NoError(t, db.GetDB().Model(&dbTable.User{}).Where("username = ?", "downgraded1").
+			Update("role", "readonly").Error)
+
+		w := contractRequest(t, router, "GET", "/web/users", nil, auth(downgradedToken))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		w = contractRequest(t, router, "PUT", "/web/countdown", map[string]interface{}{}, authPwd(downgradedToken, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
 	t.Run("写接口缺密码被拒 401", func(t *testing.T) {
 		w := contractRequest(t, router, "PUT", "/web/countdown", map[string]interface{}{}, auth(adminToken))
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -241,6 +262,109 @@ func TestRouteTable_AuthMatrix(t *testing.T) {
 		w := contractRequest(t, router, "PUT", "/web/countdown", body, authPwd(adminToken, "test123"))
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
+	// 客户端课表写路由（JWTAndPassword + RequireScope）：按角色/作用域矩阵驱动；
+	// 空 body 由 handler 校验，非 401/403 即鉴权放行
+	scopeWriteCases := []struct {
+		name, username, role, scope, path string
+		forbidden                          bool
+	}{
+		{"school_w 写本校课表放行", "schoolw1", "school_w", "s1", "/s1/g1/c1", false},
+		{"school_w 写他校课表被拒 403", "schoolw2", "school_w", "s1", "/s2/g1/c1", true},
+		{"grade_w 写本年级放行", "gradew1", "grade_w", "s1/g1", "/s1/g1/c2", false},
+		{"grade_w 写他年级被拒 403", "gradew2", "grade_w", "s1/g1", "/s1/g2/c1", true},
+		{"class_w 写本班放行", "classw1", "class_w", "s1/g1/c1", "/s1/g1/c1", false},
+		{"class_w 写他班被拒 403", "classw2", "class_w", "s1/g1/c1", "/s1/g1/c2", true},
+	}
+	for _, tc := range scopeWriteCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tok := createContractUserScoped(t, tc.username, "test123", tc.role, tc.scope)
+			w := contractRequest(t, router, "PUT", tc.path, map[string]interface{}{}, authPwd(tok, "test123"))
+			if tc.forbidden {
+				assert.Equal(t, http.StatusForbidden, w.Code)
+				return
+			}
+			assert.NotEqual(t, http.StatusUnauthorized, w.Code)
+			assert.NotEqual(t, http.StatusForbidden, w.Code)
+		})
+	}
+
+	// 倒数日写路由（handler 级 CheckUserScopeString）：按作用域矩阵驱动
+	countdownBody := func(scopes []string, name string) map[string]interface{} {
+		return map[string]interface{}{
+			"scope":     scopes,
+			"schedules": []map[string]interface{}{{"name": name, "date": "2026-01-01", "priority": 1}},
+		}
+	}
+	countdownCases := []struct {
+		name, username, role, scope string
+		bodyScopes                  []string
+		want                        int
+	}{
+		{"非 admin 写 ALL 级规则被拒 403", "schoolw3", "school_w", "s1", []string{"ALL"}, http.StatusForbidden},
+		{"school_w 写本校倒数日放行", "schoolw4", "school_w", "s1", []string{"s1/g1/c1"}, http.StatusOK},
+		{"school_w 且 Scope=ALL 写 ALL 被拒 403", "schoolwall1", "school_w", "ALL", []string{"ALL"}, http.StatusForbidden},
+	}
+	for _, tc := range countdownCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tok := createContractUserScoped(t, tc.username, "test123", tc.role, tc.scope)
+			w := contractRequest(t, router, "PUT", "/web/countdown", countdownBody(tc.bodyScopes, "x"), authPwd(tok, "test123"))
+			assert.Equal(t, tc.want, w.Code)
+		})
+	}
+
+	t.Run("收窄 scope 后旧 token 越界写被拒 403", func(t *testing.T) {
+		// admin/ALL 用户被收窄为 class_w(s1/g1/c1) 后，旧 token 内嵌 admin/ALL，
+		// 但作用域判定以数据库当前值为准，越界写必须 403
+		narrowed := createContractUserScoped(t, "narrowed1", "test123", "admin", "ALL")
+		require.NoError(t, db.GetDB().Model(&dbTable.User{}).Where("username = ?", "narrowed1").
+			Updates(map[string]interface{}{"role": "class_w", "scope": "s1/g1/c1"}).Error)
+		w := contractRequest(t, router, "PUT", "/s1/g1/c2", map[string]interface{}{}, authPwd(narrowed, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	// class_w 借 recordID 更新他人双作用域记录：旧作用域含无权 c2，必须 403
+	t.Run("class_w 覆盖他人作用域的倒数日被拒 403", func(t *testing.T) {
+		w := contractRequest(t, router, "PUT", "/web/countdown",
+			countdownBody([]string{"s1/g1/c1", "s1/g1/c2"}, "x"), authPwd(adminToken, "test123"))
+		require.Equal(t, http.StatusOK, w.Code)
+		id := decodeJSON(t, w)["id"].(string)
+
+		cw := createContractUserScoped(t, "classw3", "test123", "class_w", "s1/g1/c1")
+		body2 := countdownBody([]string{"s1/g1/c1"}, "y")
+		body2["id"] = id
+		w = contractRequest(t, router, "PUT", "/web/countdown", body2, authPwd(cw, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	// class_w 借 id 更新他人双作用域自动任务：旧作用域含无权 c2，必须 403
+	t.Run("class_w 覆盖他人作用域的自动任务被拒 403", func(t *testing.T) {
+		body := map[string]interface{}{
+			"type": 1, "scope": []string{"s1/g1/c1", "s1/g1/c2"}, "priority": 1,
+			"content": map[string]interface{}{"date": "2026-01-01", "timetableId": "exam"},
+		}
+		w := contractRequest(t, router, "PUT", "/web/autorun/timetable", body, authPwd(adminToken, "test123"))
+		require.Equal(t, http.StatusOK, w.Code)
+		id := decodeJSON(t, w)["id"].(string)
+
+		cw := createContractUserScoped(t, "classw4", "test123", "class_w", "s1/g1/c1")
+		body2 := map[string]interface{}{
+			"id": id, "type": 1, "scope": []string{"s1/g1/c1"}, "priority": 1,
+			"content": map[string]interface{}{"date": "2026-01-01", "timetableId": "exam"},
+		}
+		w = contractRequest(t, router, "PUT", "/web/autorun/timetable", body2, authPwd(cw, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+	t.Run("结构创建 school_w 建本校放行", func(t *testing.T) {
+		// 用矩阵中未出现过的校名，创建必返 200：精确断言，防止功能失败被宽断言放过
+		sw := createContractUserScoped(t, "schoolw5", "test123", "school_w", "sw-school")
+		w := contractRequest(t, router, "POST", "/web/schools", map[string]string{"name": "sw-school"}, authPwd(sw, "test123"))
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+	t.Run("结构创建 school_w 建他校被拒 403", func(t *testing.T) {
+		sw := createContractUserScoped(t, "schoolw6", "test123", "school_w", "s1")
+		w := contractRequest(t, router, "POST", "/web/schools", map[string]string{"name": "s2"}, authPwd(sw, "test123"))
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
 	t.Run("篡改 token 被拒 401", func(t *testing.T) {
 		w := contractRequest(t, router, "GET", "/web/auth/me", nil, auth("invalid.token.here"))
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
@@ -258,6 +382,9 @@ func TestRouteTable_StructureCRUDFlow(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	// 空名称 -> 400
 	w = contractRequest(t, router, "POST", "/web/schools", map[string]string{"name": ""}, h)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	// 年级名含作用域分隔符 -> 400（防止破坏作用域前缀匹配导致误删）
+	w = contractRequest(t, router, "POST", "/web/schools/测试学校/grades", map[string]string{"name": "2026/1"}, h)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	// 创建年级：应同时生成默认科目与两个默认作息表
@@ -279,6 +406,10 @@ func TestRouteTable_StructureCRUDFlow(t *testing.T) {
 	// 学校已有关联数据（默认科目/作息）时重复创建同名学校 -> 409
 	w = contractRequest(t, router, "POST", "/web/schools", map[string]string{"name": "测试学校"}, h)
 	assert.Equal(t, http.StatusConflict, w.Code)
+
+	// 班级名含作用域分隔符 -> 400（防止破坏作用域前缀匹配导致误删）
+	w = contractRequest(t, router, "POST", "/web/schools/测试学校/grades/2026/classes", map[string]string{"name": "1/2"}, h)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 
 	// 创建班级：应生成默认课表与客户端配置
 	w = contractRequest(t, router, "POST", "/web/schools/测试学校/grades/2026/classes", map[string]string{"name": "1"}, h)
@@ -329,6 +460,95 @@ func TestRouteTable_StructureCRUDFlow(t *testing.T) {
 	assert.Error(t, db.GetDB().Where("school = ? AND grade = ?", "测试学校", "2026").First(&dbTable.Subject{}).Error)
 	w = contractRequest(t, router, "DELETE", "/web/schools/测试学校", nil, h)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestRouteTable_StructureDeleteRemovesAutorunRules 级联删除结构时应同步清理作用域匹配的自动任务规则，
+// 且不影响其它作用域与 ALL 全局规则。
+func TestRouteTable_StructureDeleteRemovesAutorunRules(t *testing.T) {
+	router := setupContractEnv(t)
+	token := createContractUser(t, "admin-del-rule", "test123", "admin")
+	h := map[string]string{"Authorization": "Bearer " + token, "X-Verify-Password": "test123"}
+
+	// 创建学校/年级/班级
+	w := contractRequest(t, router, "POST", "/web/schools", map[string]string{"name": "清理测试"}, h)
+	assert.Equal(t, http.StatusOK, w.Code)
+	w = contractRequest(t, router, "POST", "/web/schools/清理测试/grades", map[string]string{"name": "2026"}, h)
+	assert.Equal(t, http.StatusOK, w.Code)
+	w = contractRequest(t, router, "POST", "/web/schools/清理测试/grades/2026/classes", map[string]string{"name": "1"}, h)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 造不同作用域的规则（含无关作用域与 ALL 全局规则）；newRule 统一构造，避免重复字面量。
+	// 待生效/生效中规则用未来日期，过期规则单独构造（验证过期规则不随结构删除清理）
+	newRule := func(id, date string, scopes ...string) *dbTable.AutorunRecord {
+		return &dbTable.AutorunRecord{
+			HashID: id, Namespace: "default", EType: dbTable.AutorunTypeSchedule, Scope: scopes,
+			Parameters: map[string]interface{}{"rule": map[string]interface{}{"date": date, "schedule": map[string]interface{}{"periods": []interface{}{}}}},
+			Level: 1,
+		}
+	}
+	seedRule := func(id, date string, scopes ...string) {
+		assert.NoError(t, db.GetDB().Save(newRule(id, date, scopes...)).Error)
+	}
+	seedRule("r-school", "2099-01-01", "清理测试")
+	seedRule("r-grade", "2099-01-01", "清理测试/2026")
+	seedRule("r-class", "2099-01-01", "清理测试/2026/1")
+	seedRule("r-other", "2099-01-01", "别处/2026/1")
+	seedRule("r-all", "2099-01-01", "ALL")
+	// 已过期规则（status=2）由 SQL 过滤：不随结构删除清理，历史数据保留
+	expired := newRule("r-expired", "2020-01-01", "清理测试/2026/1")
+	expired.Status = 2
+	assert.NoError(t, db.GetDB().Save(expired).Error)
+
+	// 多作用域记录：删除匹配作用域时必须保留无关作用域
+	assert.NoError(t, db.GetDB().Save(newRule("r-multi", "2099-01-01", "清理测试/2026/2", "别处/2026/2")).Error)
+
+	ruleExists := func(id string) bool {
+		rows, err := db.FetchAutorunRecordsNs("default", id)
+		require.NoError(t, err)
+		return len(rows) == 1
+	}
+	scopeOf := func(id string) []string {
+		rows, err := db.FetchAutorunRecordsNs("default", id)
+		require.NoError(t, err)
+		require.Len(t, rows, 1, "规则应存在: "+id)
+		return rows[0].Scope
+	}
+	deleteOK := func(path string) {
+		t.Helper()
+		w := contractRequest(t, router, "DELETE", path, nil, h)
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
+
+	// 删班级：只清理班级级规则
+	deleteOK("/web/schools/清理测试/grades/2026/classes/1")
+	assert.False(t, ruleExists("r-class"), "班级级规则应随班级删除")
+	assert.True(t, ruleExists("r-grade"), "年级级规则不应被班级删除影响")
+
+	// 重建班级级规则后删年级：删除时下级规则仍存在，年级与班级级规则必须一并清理
+	//（仅匹配自身前缀的实现会漏删班级级规则，本断言可拦截）
+	seedRule("r-class", "2099-01-01", "清理测试/2026/1")
+	deleteOK("/web/schools/清理测试/grades/2026")
+	assert.False(t, ruleExists("r-grade"), "年级级规则应随年级删除")
+	assert.False(t, ruleExists("r-class"), "班级级规则应随年级级联删除")
+	assert.True(t, ruleExists("r-school"), "学校级规则不应被年级删除影响")
+	assert.Equal(t, []string{"别处/2026/2"}, scopeOf("r-multi"), "多作用域记录应仅移除匹配作用域并保留其余")
+
+	// 重建年级与班级规则后删学校：学校/年级/班级三级规则一并清理，无关与 ALL 规则保留
+	seedRule("r-grade", "2099-01-01", "清理测试/2026")
+	seedRule("r-class", "2099-01-01", "清理测试/2026/1")
+	deleteOK("/web/schools/清理测试")
+	assert.False(t, ruleExists("r-school"), "学校级规则应随学校删除")
+	assert.False(t, ruleExists("r-grade"), "年级级规则应随学校级联删除")
+	assert.False(t, ruleExists("r-class"), "班级级规则应随学校级联删除")
+	assert.True(t, ruleExists("r-other"), "无关作用域规则不应受影响")
+	assert.True(t, ruleExists("r-all"), "ALL 全局规则不应受影响")
+	assert.True(t, ruleExists("r-multi"), "多作用域记录的剩余作用域不应受影响")
+	assert.True(t, ruleExists("r-expired"), "已过期规则不再生效，不随结构删除清理")
+
+	// 删除学校保留值 ALL 被拒 400，且全局规则不受影响
+	w = contractRequest(t, router, "DELETE", "/web/schools/ALL", nil, h)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.True(t, ruleExists("r-all"), "删除学校 ALL 不得影响全局规则")
 }
 
 // TestRouteTable_CreateGradeConcurrent 并发创建同名年级：恰好一个成功、一个 409，

@@ -34,25 +34,14 @@ func validateDateField(c *gin.Context, fieldName string, value string) bool {
 
 func persistAutorunRule(c *gin.Context, payload autorunPayload, params map[string]interface{}, hashID string) {
 	ns := middleware.GetNamespace(c)
-	claims := middleware.GetUserClaims(c)
-	if claims == nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "未认证"})
-		return
-	}
 	scope := parseScopeInput(payload.Scope)
-	// 校验作用域权限：非 admin 用户的操作范围不能超过自身 scope
-	if claims.Role != "admin" {
-		for _, s := range scope {
-			if s == "ALL" {
-				continue
-			}
-			if !db.CheckScopePermission(&dbTable.User{Role: claims.Role, Scope: claims.Scope}, s, "", "") {
-				c.JSON(http.StatusForbidden, gin.H{"error": "无权操作该作用域"})
-				return
-			}
+	// 作用域校验：非 admin 用户规则范围不能超出自身 scope（按数据库当前角色与作用域判定）；
+	// ALL 级规则仅 admin 可写，防止校/级/班写角色越权下发全局规则
+	for _, s := range scope {
+		if !middleware.CheckUserScopeString(c, s) {
+			return
 		}
 	}
-
 	if hashID == "" {
 		hashID = makeHashID(ns, payload.Type, scope, payload.Priority, params)
 	}
@@ -60,6 +49,13 @@ func persistAutorunRule(c *gin.Context, payload autorunPayload, params map[strin
 	var oldScopes []string
 	if rows, err := db.FetchAutorunRecordsNs(ns, hashID); err == nil && len(rows) > 0 {
 		oldScopes = rows[0].Scope
+	}
+	// 更新已有记录时，旧作用域同样必须在本用户权限内：防止小权限用户借 hashID
+	// 覆盖包含无权作用域的记录（新作用域已在前面校验过）
+	for _, s := range oldScopes {
+		if !middleware.CheckUserScopeString(c, s) {
+			return
+		}
 	}
 	record := dbTable.AutorunRecord{HashID: hashID, Namespace: ns, EType: payload.Type, Scope: scope, Parameters: params, Level: payload.Priority, Status: 0}
 	if err := db.UpsertAutorunRecord(&record); err != nil {

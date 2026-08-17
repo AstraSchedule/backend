@@ -54,6 +54,7 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 }
 
 // RequireRole 要求用户具有指定角色之一
+// 角色以数据库当前值为准（而非 JWT 内嵌角色），防止用户被降级后旧 token 仍可访问管理接口
 func RequireRole(roles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims, exists := c.Get(UserClaimsKey)
@@ -68,8 +69,14 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		user, err := db.GetUserByID(jwtClaims.UserID)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"detail": "未认证"})
+			c.Abort()
+			return
+		}
 		for _, role := range roles {
-			if jwtClaims.Role == role {
+			if user.Role == role {
 				c.Next()
 				return
 			}
@@ -79,9 +86,13 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 	}
 }
 
-// AdminOrToken 密码验证可操作
-// 需要 JWT + 请求头 X-Verify-Password 匹配用户密码
-func AdminOrToken() gin.HandlerFunc {
+// JWTAndPassword 写接口认证：需要有效 JWT + 密码验证，只读用户（readonly）禁止写操作。
+// 密码来源与优先级：先取请求头 X-Verify-Password，为空时回退到 JSON 请求体 password 字段
+// （见 extractPasswordFromRequest）。
+// 角色判定以数据库当前值为准（而非 JWT 内嵌角色），防止用户被降级后旧 token 继续写入。
+// 历史遗留说明：原函数名 AdminOrToken 暗示"管理员或令牌二选一"，但万能密码早在
+// 多用户 JWT 改造时已移除，实际语义一直是 JWT + 密码验证，本次改名并补角色校验。
+func JWTAndPassword() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		claims := parseJWTFromHeader(c)
 
@@ -98,6 +109,22 @@ func AdminOrToken() gin.HandlerFunc {
 			return
 		}
 
+		// 先取数据库当前用户：角色判定与后续密码校验共用同一次查询，不增加额外 DB 调用
+		user, err := db.GetUserByID(claims.UserID)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"detail": "未认证"})
+			c.Abort()
+			return
+		}
+
+		// 只读用户禁止写操作（此前任何角色只要知道密码都能写，且信任 token 内嵌角色
+		// 会让被降级用户的旧 token 继续写入）
+		if user.Role == "readonly" {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "只读用户无写权限"})
+			c.Abort()
+			return
+		}
+
 		password := extractPasswordFromRequest(c)
 		if password == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"detail": "需要提供密码"})
@@ -105,8 +132,7 @@ func AdminOrToken() gin.HandlerFunc {
 			return
 		}
 
-		user, err := db.GetUserByID(claims.UserID)
-		if err != nil || !service.CheckPassword(password, user.PasswordHash) {
+		if !service.CheckPassword(password, user.PasswordHash) {
 			c.JSON(http.StatusUnauthorized, gin.H{"detail": "你寻思寻思这密码它对吗？"})
 			c.Abort()
 			return

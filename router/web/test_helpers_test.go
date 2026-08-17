@@ -11,10 +11,23 @@ import (
 	"AstraScheduleServerGo/middleware"
 	"AstraScheduleServerGo/model/dbTable"
 	"AstraScheduleServerGo/service"
+	"AstraScheduleServerGo/testutil"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+// adminOnly 在请求上下文写入数据库内 admin 用户的 claims（模拟 JWTAndPassword 之后的已认证状态）。
+// handler 级测试不挂完整认证中间件，直接挂本中间件补上下文，供 handler 内的作用域校验（CheckUserScope*）使用。
+func adminOnly(t *testing.T) gin.HandlerFunc {
+	t.Helper()
+	user := testutil.CreateUser(t, db.GetDB(), "default", "mw-web-admin", "test123", "admin", "ALL")
+	claims := &service.JWTClaims{UserID: user.ID, Namespace: "default", Username: user.Username, Role: user.Role, Scope: user.Scope}
+	return func(c *gin.Context) {
+		c.Set(middleware.UserClaimsKey, claims)
+		c.Next()
+	}
+}
 
 // doRawRequest 以原始字符串作为请求体执行请求并返回 recorder，
 // 供非法 JSON 等场景使用，避免在调用侧产生重复代码块被 SonarQube 计入 new code duplication。
